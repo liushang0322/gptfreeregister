@@ -6,9 +6,7 @@
    ============================================================ */
 
 #ip-proxy-section,
-#phone-verification-section {
-  display: none !important;
-}
+/* Removed display: none for phone verification section */
 
 /* ---- Light Theme (default) ---- */
 :root {

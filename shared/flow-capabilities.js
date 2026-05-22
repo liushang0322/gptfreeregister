@@ -291,7 +291,7 @@
         activeFlowId,
         canShowContributionMode: Boolean(flowState.supportsContributionMode),
         canShowLuckmail: Boolean(flowState.supportsLuckmail),
-        canShowPhoneSettings: Boolean(flowState.supportsPhoneVerificationSettings),
+        canShowPhoneSettings: true,
         canShowPlusSettings: Boolean(flowState.supportsPlusMode),
         canSwitchFlow: Boolean(flowState.canSwitchFlow),
         canEditPlusAccountAccessStrategy,
