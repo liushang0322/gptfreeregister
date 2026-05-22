@@ -610,8 +610,9 @@ const DEFAULT_LUCKMAIL_PROJECT_CODE = 'openai';
 const DEFAULT_HERO_SMS_BASE_URL = 'https://hero-sms.com/stubs/handler_api.php';
 const HERO_SMS_SERVICE_CODE = 'dr';
 const HERO_SMS_SERVICE_LABEL = 'OpenAI';
-const HERO_SMS_COUNTRY_ID = 52;
-const HERO_SMS_COUNTRY_LABEL = 'Thailand';
+const LEGACY_HERO_SMS_DEFAULT_COUNTRY_ID = 52;
+const HERO_SMS_COUNTRY_ID = 151;
+const HERO_SMS_COUNTRY_LABEL = 'Chile';
 const PHONE_SMS_PROVIDER_HERO = 'hero-sms';
 const PHONE_SMS_PROVIDER_5SIM = '5sim';
 const PHONE_SMS_PROVIDER_HERO_SMS = PHONE_SMS_PROVIDER_HERO;
@@ -630,6 +631,13 @@ const DEFAULT_FIVE_SIM_COUNTRY_ORDER = Object.freeze(['thailand']);
 const DEFAULT_NEX_SMS_BASE_URL = 'https://api.nexsms.net';
 const DEFAULT_NEX_SMS_SERVICE_CODE = 'ot';
 const DEFAULT_NEX_SMS_COUNTRY_ORDER = Object.freeze([1]);
+const NEX_SMS_NUMBER_TYPE_NORMAL = 'normal';
+const NEX_SMS_NUMBER_TYPE_PREMIUM = 'premium';
+const DEFAULT_NEX_SMS_NUMBER_TYPE = NEX_SMS_NUMBER_TYPE_NORMAL;
+const DEFAULT_NEX_SMS_PREMIUM_APP_QUERY = 'openai';
+const DEFAULT_NEX_SMS_PREMIUM_CATE_ID = 3;
+const DEFAULT_NEX_SMS_PREMIUM_CARD_TYPE = 1;
+const DEFAULT_NEX_SMS_PREMIUM_EXPIRY = 0;
 const DEFAULT_HERO_SMS_REUSE_ENABLED = true;
 const HERO_SMS_ACQUIRE_PRIORITY_COUNTRY = 'country';
 const HERO_SMS_ACQUIRE_PRIORITY_PRICE = 'price';
@@ -639,7 +647,7 @@ const FIVE_SIM_COUNTRY_ID = 'vietnam';
 const FIVE_SIM_COUNTRY_LABEL = '越南 (Vietnam)';
 const FIVE_SIM_SUPPORTED_COUNTRY_IDS = ['indonesia', 'thailand', 'vietnam'];
 const FIVE_SIM_SUPPORTED_COUNTRY_ID_SET = new Set(FIVE_SIM_SUPPORTED_COUNTRY_IDS);
-const HERO_SMS_SUPPORTED_COUNTRY_IDS = [6, 52, 187, 16, 182, 151, 43, 73, 10];
+const HERO_SMS_SUPPORTED_COUNTRY_IDS = [6, 52, 187, 16, 182, 151, 43, 78, 10];
 const HERO_SMS_SUPPORTED_COUNTRY_ID_SET = new Set(HERO_SMS_SUPPORTED_COUNTRY_IDS.map(String));
 const HERO_SMS_COUNTRY_BY_PHONE_PREFIX = Object.freeze([
   { prefix: '84', id: 10, label: 'Vietnam' },
@@ -649,7 +657,7 @@ const HERO_SMS_COUNTRY_BY_PHONE_PREFIX = Object.freeze([
   { prefix: '81', id: 182, label: 'Japan' },
   { prefix: '56', id: 151, label: 'Chile' },
   { prefix: '49', id: 43, label: 'Germany' },
-  { prefix: '33', id: 73, label: 'France' },
+  { prefix: '33', id: 78, label: 'France' },
   { prefix: '1', id: 187, label: 'USA' },
 ]);
 const FIVE_SIM_OPERATOR = DEFAULT_FIVE_SIM_OPERATOR;
@@ -1158,6 +1166,12 @@ const PERSISTED_SETTING_DEFAULTS = {
   nexSmsApiKey: '',
   nexSmsCountryOrder: [...DEFAULT_NEX_SMS_COUNTRY_ORDER],
   nexSmsServiceCode: DEFAULT_NEX_SMS_SERVICE_CODE,
+  nexSmsNumberType: DEFAULT_NEX_SMS_NUMBER_TYPE,
+  nexSmsPremiumAppQuery: DEFAULT_NEX_SMS_PREMIUM_APP_QUERY,
+  nexSmsPremiumCateId: DEFAULT_NEX_SMS_PREMIUM_CATE_ID,
+  nexSmsPremiumCardType: DEFAULT_NEX_SMS_PREMIUM_CARD_TYPE,
+  nexSmsPremiumExpiry: DEFAULT_NEX_SMS_PREMIUM_EXPIRY,
+  nexSmsPremiumPrefix: '',
   phonePreferredActivation: null,
 };
 
@@ -1593,6 +1607,62 @@ function normalizeHeroSmsMaxPrice(value = '') {
   return String(Math.round(numeric * 10000) / 10000);
 }
 
+function normalizeHeroSmsPricePairForPersistence(payload = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return;
+  }
+  if (payload.heroSmsMinPrice === '0.01' && payload.heroSmsMaxPrice === '0.1') {
+    payload.heroSmsMinPrice = '';
+    payload.heroSmsMaxPrice = '';
+  }
+}
+
+function normalizeHeroSmsCountryForPersistence(payload = {}, sourceInput = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return;
+  }
+  const hasCountryId = Object.prototype.hasOwnProperty.call(payload, 'heroSmsCountryId');
+  if (!hasCountryId) {
+    return;
+  }
+  const hasFallback = Array.isArray(sourceInput?.heroSmsCountryFallback)
+    ? sourceInput.heroSmsCountryFallback.length > 0
+    : Boolean(sourceInput?.heroSmsCountryFallback);
+  const inputCountryId = Math.floor(Number(sourceInput?.heroSmsCountryId));
+  const inputCountryLabel = String(sourceInput?.heroSmsCountryLabel || '').trim().toLowerCase();
+  if (
+    inputCountryId === LEGACY_HERO_SMS_DEFAULT_COUNTRY_ID
+    && !hasFallback
+    && (!inputCountryLabel || inputCountryLabel === 'thailand')
+  ) {
+    payload.heroSmsCountryId = HERO_SMS_COUNTRY_ID;
+    payload.heroSmsCountryLabel = HERO_SMS_COUNTRY_LABEL;
+    payload.heroSmsCountryFallback = [];
+  }
+}
+
+function normalizeHeroSmsCountryForStateView(state = {}) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+    return state;
+  }
+  const countryId = Math.floor(Number(state.heroSmsCountryId));
+  const countryLabel = String(state.heroSmsCountryLabel || '').trim().toLowerCase();
+  const fallback = normalizeHeroSmsCountryFallback(state.heroSmsCountryFallback);
+  if (
+    countryId === LEGACY_HERO_SMS_DEFAULT_COUNTRY_ID
+    && fallback.length === 0
+    && (!countryLabel || countryLabel === 'thailand')
+  ) {
+    return {
+      ...state,
+      heroSmsCountryId: HERO_SMS_COUNTRY_ID,
+      heroSmsCountryLabel: HERO_SMS_COUNTRY_LABEL,
+      heroSmsCountryFallback: [],
+    };
+  }
+  return state;
+}
+
 function normalizeHeroSmsAcquirePriority(value = '') {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === HERO_SMS_ACQUIRE_PRIORITY_PRICE) {
@@ -1985,6 +2055,44 @@ function normalizeNexSmsServiceCode(value = '', fallback = DEFAULT_NEX_SMS_SERVI
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '');
   return fallbackNormalized || DEFAULT_NEX_SMS_SERVICE_CODE;
+}
+
+function normalizeNexSmsNumberType(value = '') {
+  return String(value || '').trim().toLowerCase() === NEX_SMS_NUMBER_TYPE_PREMIUM
+    ? NEX_SMS_NUMBER_TYPE_PREMIUM
+    : DEFAULT_NEX_SMS_NUMBER_TYPE;
+}
+
+function normalizeNexSmsPremiumAppQuery(value = '') {
+  return String(value || '').trim() || DEFAULT_NEX_SMS_PREMIUM_APP_QUERY;
+}
+
+function normalizeNexSmsPremiumInteger(value, fallback = 0, min = 0, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Math.floor(Number(value));
+  const fallbackParsed = Math.floor(Number(fallback));
+  const nextValue = Number.isFinite(parsed) ? parsed : fallbackParsed;
+  const bounded = Number.isFinite(nextValue) ? nextValue : min;
+  return Math.max(min, Math.min(max, bounded));
+}
+
+function normalizeNexSmsPremiumCateId(value) {
+  return normalizeNexSmsPremiumInteger(value, DEFAULT_NEX_SMS_PREMIUM_CATE_ID, 1, 999999);
+}
+
+function normalizeNexSmsPremiumCardType(value) {
+  return normalizeNexSmsPremiumInteger(value, DEFAULT_NEX_SMS_PREMIUM_CARD_TYPE, 1, 3);
+}
+
+function normalizeNexSmsPremiumExpiry(value) {
+  return normalizeNexSmsPremiumInteger(value, DEFAULT_NEX_SMS_PREMIUM_EXPIRY, 0, 6);
+}
+
+function normalizeNexSmsPremiumPrefix(value = '') {
+  return String(value || '')
+    .split(/[,，\s]+/)
+    .map((entry) => entry.replace(/\D+/g, ''))
+    .filter(Boolean)
+    .join(',');
 }
 
 function normalizePhonePreferredActivation(value) {
@@ -3377,6 +3485,18 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeNexSmsCountryOrder(value);
     case 'nexSmsServiceCode':
       return normalizeNexSmsServiceCode(value);
+    case 'nexSmsNumberType':
+      return normalizeNexSmsNumberType(value);
+    case 'nexSmsPremiumAppQuery':
+      return normalizeNexSmsPremiumAppQuery(value);
+    case 'nexSmsPremiumCateId':
+      return normalizeNexSmsPremiumCateId(value);
+    case 'nexSmsPremiumCardType':
+      return normalizeNexSmsPremiumCardType(value);
+    case 'nexSmsPremiumExpiry':
+      return normalizeNexSmsPremiumExpiry(value);
+    case 'nexSmsPremiumPrefix':
+      return normalizeNexSmsPremiumPrefix(value);
     case 'phonePreferredActivation':
       return normalizePhonePreferredActivation(value);
     default:
@@ -3463,6 +3583,8 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
     }
     payload.cloudMailDomains = domains;
   }
+  normalizeHeroSmsPricePairForPersistence(payload);
+  normalizeHeroSmsCountryForPersistence(payload, normalizedInput);
   if (
     Object.prototype.hasOwnProperty.call(payload, 'sub2apiGroupName')
     || Object.prototype.hasOwnProperty.call(payload, 'sub2apiGroupNames')
@@ -3560,13 +3682,13 @@ async function getState() {
     getPersistedAliasState(),
     accountRunHistoryHelpers?.getPersistedAccountRunHistory?.() || [],
   ]);
-  return buildStateViewWithRuntimeState({
+  return buildStateViewWithRuntimeState(normalizeHeroSmsCountryForStateView({
     ...DEFAULT_STATE,
     ...persistedSettings,
     ...persistedAliasState,
     ...state,
     accountRunHistory,
-  });
+  }));
 }
 
 async function initializeSessionStorageAccess() {
@@ -10734,6 +10856,7 @@ const AUTO_RUN_BACKGROUND_COMPLETED_STEP_KEYS = new Set([
   'submit-signup-email',
   'fetch-signup-code',
   'wait-registration-success',
+  'save-session-json',
   'local-cpa-json-export',
   'plus-checkout-billing',
   'paypal-approve',
@@ -11845,6 +11968,7 @@ const AUTO_RUN_NODE_DELAYS = Object.freeze({
   'fetch-signup-code': 2000,
   'fill-profile': 0,
   'wait-registration-success': 3000,
+  'save-session-json': 0,
   'plus-checkout-create': 3000,
   'plus-checkout-billing': 2000,
   'gopay-subscription-confirm': 2000,
@@ -13274,6 +13398,11 @@ const phoneVerificationHelpers = self.MultiPageBackgroundPhoneVerification?.crea
   DEFAULT_FIVE_SIM_PRODUCT,
   DEFAULT_NEX_SMS_BASE_URL,
   DEFAULT_NEX_SMS_COUNTRY_ORDER,
+  DEFAULT_NEX_SMS_NUMBER_TYPE,
+  DEFAULT_NEX_SMS_PREMIUM_APP_QUERY,
+  DEFAULT_NEX_SMS_PREMIUM_CARD_TYPE,
+  DEFAULT_NEX_SMS_PREMIUM_CATE_ID,
+  DEFAULT_NEX_SMS_PREMIUM_EXPIRY,
   DEFAULT_NEX_SMS_SERVICE_CODE,
   DEFAULT_HERO_SMS_BASE_URL,
   DEFAULT_HERO_SMS_REUSE_ENABLED,
@@ -13667,6 +13796,7 @@ const stepExecutorsByKey = {
   'fetch-signup-code': (state) => step4Executor.executeStep4(state),
   'fill-profile': (state) => step5Executor.executeStep5(state),
   'wait-registration-success': (state) => step6Executor.executeStep6(state),
+  'save-session-json': (state) => step6Executor.executeSaveSessionJson(state),
   'local-cpa-json-export': (state) => step6Executor.executeLocalCpaJsonNoRtExport(state),
   'plus-checkout-create': (state) => plusCheckoutCreateExecutor.executePlusCheckoutCreate(state),
   'plus-checkout-billing': (state) => plusCheckoutBillingExecutor.executePlusCheckoutBilling(state),

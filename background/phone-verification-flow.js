@@ -27,10 +27,15 @@
       DEFAULT_NEX_SMS_BASE_URL = 'https://api.nexsms.net',
       DEFAULT_NEX_SMS_COUNTRY_ORDER = [1],
       DEFAULT_NEX_SMS_SERVICE_CODE = 'ot',
+      DEFAULT_NEX_SMS_NUMBER_TYPE = 'normal',
+      DEFAULT_NEX_SMS_PREMIUM_APP_QUERY = 'openai',
+      DEFAULT_NEX_SMS_PREMIUM_CATE_ID = 3,
+      DEFAULT_NEX_SMS_PREMIUM_CARD_TYPE = 1,
+      DEFAULT_NEX_SMS_PREMIUM_EXPIRY = 0,
       DEFAULT_HERO_SMS_REUSE_ENABLED = true,
       createFiveSimProvider = null,
-      HERO_SMS_COUNTRY_ID = 52,
-      HERO_SMS_COUNTRY_LABEL = 'Thailand',
+      HERO_SMS_COUNTRY_ID = 151,
+      HERO_SMS_COUNTRY_LABEL = 'Chile',
       HERO_SMS_SERVICE_CODE = 'dr',
       HERO_SMS_SERVICE_LABEL = 'OpenAI',
       DEFAULT_PHONE_CODE_WAIT_SECONDS = 60,
@@ -83,6 +88,8 @@
     const PHONE_SMS_PROVIDER_HERO_SMS = PHONE_SMS_PROVIDER_HERO;
     const PHONE_SMS_PROVIDER_FIVE_SIM = PHONE_SMS_PROVIDER_5SIM;
     const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+    const NEX_SMS_NUMBER_TYPE_NORMAL = 'normal';
+    const NEX_SMS_NUMBER_TYPE_PREMIUM = 'premium';
     const DEFAULT_PHONE_SMS_PROVIDER = PHONE_SMS_PROVIDER_HERO;
     const DEFAULT_PHONE_SMS_PROVIDER_ORDER = Object.freeze([
       PHONE_SMS_PROVIDER_HERO,
@@ -112,7 +119,7 @@
       { prefix: '81', id: 182, label: 'Japan' },
       { prefix: '56', id: 151, label: 'Chile' },
       { prefix: '49', id: 43, label: 'Germany' },
-      { prefix: '33', id: 73, label: 'France' },
+      { prefix: '33', id: 78, label: 'France' },
       { prefix: '1', id: 187, label: 'USA' },
     ]);
     const activationPriceHintsByKey = new Map();
@@ -258,6 +265,44 @@
       return fallbackNormalized || 'ot';
     }
 
+    function normalizeNexSmsNumberType(value = '') {
+      return String(value || '').trim().toLowerCase() === NEX_SMS_NUMBER_TYPE_PREMIUM
+        ? NEX_SMS_NUMBER_TYPE_PREMIUM
+        : DEFAULT_NEX_SMS_NUMBER_TYPE;
+    }
+
+    function normalizeNexSmsPremiumAppQuery(value = '') {
+      return String(value || '').trim() || DEFAULT_NEX_SMS_PREMIUM_APP_QUERY;
+    }
+
+    function normalizeNexSmsPremiumInteger(value, fallback = 0, min = 0, max = Number.MAX_SAFE_INTEGER) {
+      const parsed = Math.floor(Number(value));
+      const fallbackParsed = Math.floor(Number(fallback));
+      const nextValue = Number.isFinite(parsed) ? parsed : fallbackParsed;
+      const bounded = Number.isFinite(nextValue) ? nextValue : min;
+      return Math.max(min, Math.min(max, bounded));
+    }
+
+    function normalizeNexSmsPremiumCateId(value) {
+      return normalizeNexSmsPremiumInteger(value, DEFAULT_NEX_SMS_PREMIUM_CATE_ID, 1, 999999);
+    }
+
+    function normalizeNexSmsPremiumCardType(value) {
+      return normalizeNexSmsPremiumInteger(value, DEFAULT_NEX_SMS_PREMIUM_CARD_TYPE, 1, 3);
+    }
+
+    function normalizeNexSmsPremiumExpiry(value) {
+      return normalizeNexSmsPremiumInteger(value, DEFAULT_NEX_SMS_PREMIUM_EXPIRY, 0, 6);
+    }
+
+    function normalizeNexSmsPremiumPrefix(value = '') {
+      return String(value || '')
+        .split(/[,，\s]+/)
+        .map((entry) => entry.replace(/\D+/g, ''))
+        .filter(Boolean)
+        .join(',');
+    }
+
     function normalizeFiveSimCountryCode(value = '', fallback = 'thailand') {
       const normalized = String(value || '')
         .trim()
@@ -397,14 +442,24 @@
       return Math.round(parsed * 10000) / 10000;
     }
 
+    function isLegacyHeroSmsImplicitPriceRange(minPriceLimit, maxPriceLimit, provider = DEFAULT_PHONE_SMS_PROVIDER) {
+      return normalizePhoneSmsProvider(provider) === PHONE_SMS_PROVIDER_HERO
+        && minPriceLimit === 0.01
+        && maxPriceLimit === 0.1;
+    }
+
     function resolvePhonePriceRange(state = {}, provider = DEFAULT_PHONE_SMS_PROVIDER) {
       const normalizedProvider = normalizePhoneSmsProvider(provider);
-      const minPriceLimit = normalizedProvider === PHONE_SMS_PROVIDER_5SIM
+      let minPriceLimit = normalizedProvider === PHONE_SMS_PROVIDER_5SIM
         ? normalizeHeroSmsPriceLimit(state?.fiveSimMinPrice)
         : normalizeHeroSmsPriceLimit(state?.heroSmsMinPrice);
-      const maxPriceLimit = normalizedProvider === PHONE_SMS_PROVIDER_5SIM
+      let maxPriceLimit = normalizedProvider === PHONE_SMS_PROVIDER_5SIM
         ? normalizeHeroSmsPriceLimit(state?.fiveSimMaxPrice)
         : normalizeHeroSmsPriceLimit(state?.heroSmsMaxPrice);
+      if (isLegacyHeroSmsImplicitPriceRange(minPriceLimit, maxPriceLimit, normalizedProvider)) {
+        minPriceLimit = null;
+        maxPriceLimit = null;
+      }
       return {
         provider: normalizedProvider,
         minPriceLimit,
@@ -1336,6 +1391,11 @@
         ...(expiresAt > 0 ? { expiresAt } : {}),
         ...(statusAction ? { statusAction } : {}),
         ...(record.source ? { source: String(record.source || '').trim() } : {}),
+        ...(record.nexSmsNumberType ? { nexSmsNumberType: normalizeNexSmsNumberType(record.nexSmsNumberType) } : {}),
+        ...(record.premiumCateId !== undefined ? { premiumCateId: normalizeNexSmsPremiumCateId(record.premiumCateId) } : {}),
+        ...(record.premiumCardType !== undefined ? { premiumCardType: normalizeNexSmsPremiumCardType(record.premiumCardType) } : {}),
+        ...(record.premiumAppName ? { premiumAppName: String(record.premiumAppName || '').trim() } : {}),
+        ...(record.premiumAppId !== undefined ? { premiumAppId: Math.max(0, Math.floor(Number(record.premiumAppId) || 0)) } : {}),
         ...(record.phoneCodeReceived ? { phoneCodeReceived: true } : {}),
         ...(record.phoneCodeReceivedAt ? { phoneCodeReceivedAt: Math.max(0, Number(record.phoneCodeReceivedAt) || 0) } : {}),
       };
@@ -2054,6 +2114,12 @@
           baseUrl: normalizeUrl(state.nexSmsBaseUrl, DEFAULT_NEX_SMS_BASE_URL).replace(/\/+$/, ''),
           serviceCode: normalizeNexSmsServiceCode(state.nexSmsServiceCode, DEFAULT_NEX_SMS_SERVICE_CODE),
           countryCandidates: resolveNexSmsCountryCandidates(state),
+          numberType: normalizeNexSmsNumberType(state.nexSmsNumberType),
+          premiumAppQuery: normalizeNexSmsPremiumAppQuery(state.nexSmsPremiumAppQuery),
+          premiumCateId: normalizeNexSmsPremiumCateId(state.nexSmsPremiumCateId),
+          premiumCardType: normalizeNexSmsPremiumCardType(state.nexSmsPremiumCardType),
+          premiumExpiry: normalizeNexSmsPremiumExpiry(state.nexSmsPremiumExpiry),
+          premiumPrefix: normalizeNexSmsPremiumPrefix(state.nexSmsPremiumPrefix),
         };
       }
 
@@ -2504,7 +2570,7 @@
       };
       if (options.maxPrice !== null && options.maxPrice !== undefined) {
         query.maxPrice = options.maxPrice;
-        if (options.fixedPrice !== false) {
+        if (options.fixedPrice === true) {
           query.fixedPrice = 'true';
         }
       }
@@ -3146,6 +3212,170 @@
       return /invalid\s*api\s*key|bad[_\s-]*key|wrong[_\s-]*key|unauthorized|forbidden|no\s*balance|insufficient\s*balance|余额不足|账号.*封禁|banned/i.test(text);
     }
 
+    function collectNexSmsListItems(payload) {
+      const data = payload?.data;
+      if (Array.isArray(data)) {
+        return data;
+      }
+      if (Array.isArray(data?.list)) {
+        return data.list;
+      }
+      if (Array.isArray(payload?.list)) {
+        return payload.list;
+      }
+      return [];
+    }
+
+    function nexSmsTextMatchesQuery(value = '', query = '') {
+      const haystack = String(value || '').trim().toLowerCase();
+      const needle = String(query || '').trim().toLowerCase();
+      if (!needle) {
+        return true;
+      }
+      if (!haystack) {
+        return false;
+      }
+      return needle
+        .split(/[\s,，;；|/]+/)
+        .filter(Boolean)
+        .every((part) => haystack.includes(part));
+    }
+
+    async function resolveNexSmsPremiumApp(config) {
+      const appQuery = normalizeNexSmsPremiumAppQuery(config.premiumAppQuery);
+      const cateId = normalizeNexSmsPremiumCateId(config.premiumCateId);
+      const cardType = normalizeNexSmsPremiumCardType(config.premiumCardType);
+      const maxPages = 20;
+      let bestAnyStock = null;
+      let bestOutOfStock = null;
+
+      for (let page = 1; page <= maxPages; page += 1) {
+        const payload = await fetchNexSmsPayload(
+          config,
+          '/api/premium/list',
+          'NexSMS premium list',
+          {
+            query: {
+              cateId,
+              type: cardType,
+              page,
+              pageSize: 50,
+              sortBy: 'id',
+              sortOrder: 'desc',
+            },
+          }
+        );
+        if (!isNexSmsSuccessPayload(payload)) {
+          throw createPhoneSmsActionFailureError('NexSMS premium list', describeNexSmsPayload(payload) || 'empty response');
+        }
+        const items = collectNexSmsListItems(payload);
+        const matchedItems = items.filter((item) => nexSmsTextMatchesQuery(item?.name || item?.appName || '', appQuery));
+        const inStock = matchedItems.find((item) => Math.max(0, Math.floor(Number(item?.quantity) || 0)) > 0);
+        if (inStock) {
+          return inStock;
+        }
+        if (!bestOutOfStock && matchedItems.length) {
+          bestOutOfStock = matchedItems[0];
+        }
+        if (!bestAnyStock) {
+          bestAnyStock = items.find((item) => Math.max(0, Math.floor(Number(item?.quantity) || 0)) > 0) || null;
+        }
+        const totalPages = Math.max(0, Math.floor(Number(payload?.data?.totalPages) || 0));
+        const total = Math.max(0, Math.floor(Number(payload?.data?.total) || 0));
+        const pageSize = Math.max(1, Math.floor(Number(payload?.data?.pageSize) || 50));
+        if (!items.length || (totalPages > 0 && page >= totalPages) || (total > 0 && page * pageSize >= total)) {
+          break;
+        }
+      }
+
+      if (bestOutOfStock) {
+        throw new Error(`NexSMS 优选号码 ${appQuery} 暂无库存。`);
+      }
+      const stockHint = bestAnyStock?.name ? `；同分类有库存项目：${bestAnyStock.name}` : '';
+      throw new Error(`NexSMS 优选号码未找到服务 ${appQuery}（分类 #${cateId}, type=${cardType}）${stockHint}。`);
+    }
+
+    function parseNexSmsPremiumActivationPayload(payload, fallback = {}) {
+      if (!isNexSmsSuccessPayload(payload)) {
+        return null;
+      }
+      const items = collectNexSmsListItems(payload);
+      const item = items[0] || payload?.data || {};
+      const phoneNumber = String(item.tel || item.phoneNumber || item.phone || item.number || fallback.phoneNumber || '').trim();
+      if (!phoneNumber) {
+        return null;
+      }
+      const appName = String(item.appName || item.name || fallback.appName || fallback.premiumAppQuery || '').trim();
+      const cateId = normalizeNexSmsPremiumCateId(item.cateId || item.appCateId || fallback.premiumCateId);
+      const cardType = normalizeNexSmsPremiumCardType(item.type || item.cardType || fallback.premiumCardType);
+      const expiresAt = normalizeTimestampMs(item.endTime || item.expiresAt || item.expireAt || item.expiresTime);
+      return {
+        activationId: phoneNumber,
+        phoneNumber,
+        provider: PHONE_SMS_PROVIDER_NEXSMS,
+        serviceCode: appName || DEFAULT_NEX_SMS_PREMIUM_APP_QUERY,
+        countryId: cateId,
+        countryLabel: cateId === DEFAULT_NEX_SMS_PREMIUM_CATE_ID ? '加拿大 ixica' : `Premium category #${cateId}`,
+        successfulUses: normalizeUseCount(fallback.successfulUses ?? 0),
+        maxUses: 1,
+        ...(expiresAt > 0 ? { expiresAt } : {}),
+        source: 'nexsms-premium',
+        nexSmsNumberType: NEX_SMS_NUMBER_TYPE_PREMIUM,
+        premiumCateId: cateId,
+        premiumCardType: cardType,
+        premiumAppName: appName,
+        premiumAppId: Math.max(0, Math.floor(Number(item.appId || fallback.appId) || 0)),
+      };
+    }
+
+    async function requestNexSmsPremiumActivation(state = {}) {
+      const config = resolvePhoneConfig(state);
+      const app = await resolveNexSmsPremiumApp(config);
+      const appId = Math.max(0, Math.floor(Number(app?.id || app?.appId) || 0));
+      if (!appId) {
+        throw new Error('NexSMS 优选号码项目 ID 缺失。');
+      }
+      const cateId = normalizeNexSmsPremiumCateId(app.cateId || config.premiumCateId);
+      const cardType = normalizeNexSmsPremiumCardType(app.type || config.premiumCardType);
+      const appName = String(app.name || app.appName || config.premiumAppQuery || '').trim();
+      await addLog(
+        `步骤 9：NexSMS 优选号码准备下单：${appName || config.premiumAppQuery} / ${cateId === DEFAULT_NEX_SMS_PREMIUM_CATE_ID ? '加拿大 ixica' : `分类 #${cateId}`} / type=${cardType}。`,
+        'info'
+      );
+      const body = {
+        appId,
+        type: cardType,
+        quantity: 1,
+        expiry: normalizeNexSmsPremiumExpiry(config.premiumExpiry),
+        prefix: config.premiumPrefix || null,
+        exclude_prefix: null,
+      };
+      const payload = await fetchNexSmsPayload(
+        config,
+        '/api/premium/purchase',
+        'NexSMS premium purchase',
+        { method: 'POST', body }
+      );
+      if (!isNexSmsSuccessPayload(payload)) {
+        throw createPhoneSmsActionFailureError('NexSMS premium purchase', describeNexSmsPayload(payload) || 'empty response');
+      }
+      const activation = parseNexSmsPremiumActivationPayload(payload, {
+        appId,
+        appName,
+        premiumAppQuery: config.premiumAppQuery,
+        premiumCateId: cateId,
+        premiumCardType: cardType,
+      });
+      if (!activation) {
+        throw new Error('NexSMS 优选号码购买成功，但未返回手机号。');
+      }
+      const price = Number(app?.price);
+      if (Number.isFinite(price) && price > 0) {
+        rememberActivationAcquiredPrice(activation, Math.round(price * 10000) / 10000);
+      }
+      return activation;
+    }
+
     function collectNexSmsPriceCandidates(countryData = {}) {
       const candidates = [];
       const pushCandidate = (value) => {
@@ -3269,6 +3499,9 @@
 
     async function requestNexSmsActivation(state = {}, options = {}) {
       const config = resolvePhoneConfig(state);
+      if (config.numberType === NEX_SMS_NUMBER_TYPE_PREMIUM) {
+        return requestNexSmsPremiumActivation(state, options);
+      }
       const allCountryCandidates = Array.isArray(config.countryCandidates) && config.countryCandidates.length
         ? config.countryCandidates
         : resolveNexSmsCountryCandidates(state);
@@ -3773,12 +4006,18 @@
             }
             continue;
           }
-          for (const maxPrice of pricesToTry) {
+          const purchaseReferencePrice = pricesToTry.find((price) => Number.isFinite(Number(price)) && Number(price) > 0) ?? null;
+          const purchaseMaxPrices = maxPriceLimit !== null ? [maxPriceLimit] : [null];
+          for (const maxPrice of purchaseMaxPrices) {
             for (const requestAction of requestActions) {
               try {
-                const fixedPrice = !Boolean(pricePlan.syntheticUserLimitProbe);
+                const fixedPrice = false;
+                const purchaseLimitText = maxPrice === null || maxPrice === undefined ? '自动' : maxPrice;
+                const referencePriceText = purchaseReferencePrice === null || purchaseReferencePrice === undefined
+                  ? ''
+                  : `，参考档位 ${purchaseReferencePrice}`;
                 await addLog(
-                  `步骤 9：HeroSMS ${countryConfig.label} 正在尝试${formatHeroSmsActionName(requestAction)}，价格档位 ${maxPrice === null || maxPrice === undefined ? '自动' : maxPrice}。`,
+                  `步骤 9：HeroSMS ${countryConfig.label} 正在尝试${formatHeroSmsActionName(requestAction)}，购买上限 ${purchaseLimitText}${referencePriceText}。`,
                   'info'
                 );
                 const payload = await requestPhoneActivationWithPrice(
@@ -3794,7 +4033,7 @@
                 );
                 const activation = parseActivationPayload(payload, buildFallbackActivation(requestAction));
                 if (activation) {
-                  const numericPrice = Number(maxPrice);
+                  const numericPrice = Number(purchaseReferencePrice ?? maxPrice);
                   rememberActivationAcquiredPrice(activation, numericPrice);
                   return {
                     ...activation,
@@ -3835,6 +4074,7 @@
             const tiersTriedText = pricesToTry
               .map((value) => (value === null || value === undefined ? '自动' : String(value)))
               .join(', ');
+            const purchaseLimitText = maxPriceLimit === null ? '自动' : String(maxPriceLimit);
             if (
               pricePlan.userLimit !== null
               && pricePlan.minCatalogPrice !== null
@@ -3845,7 +4085,7 @@
               );
             } else {
               noNumbersByCountry.push(
-                `${countryConfig.label}: ${lastFailureText || 'NO_NUMBERS'}${tiersTriedText ? `（已尝试档位：${tiersTriedText}）` : ''}`
+                `${countryConfig.label}: ${lastFailureText || 'NO_NUMBERS'}${tiersTriedText ? `（参考档位：${tiersTriedText}；购买上限：${purchaseLimitText}）` : ''}`
               );
               retryableNoNumberCountries.push(countryConfig.label);
             }
@@ -3962,10 +4202,13 @@
         const payload = await fetchFiveSimPayload(config, endpoint, actionLabel || '5sim set status');
         return describeFiveSimPayload(payload);
       }
-      if (config.provider === PHONE_SMS_PROVIDER_NEXSMS) {
-        if (normalizedStatus === 6) {
-          return 'NexSMS complete skipped';
-        }
+        if (config.provider === PHONE_SMS_PROVIDER_NEXSMS) {
+          if (normalizedActivation.source === 'nexsms-premium' || normalizedActivation.nexSmsNumberType === NEX_SMS_NUMBER_TYPE_PREMIUM) {
+            return 'NexSMS premium close skipped';
+          }
+          if (normalizedStatus === 6) {
+            return 'NexSMS complete skipped';
+          }
         const payload = await fetchNexSmsPayload(
           config,
           '/api/close/activation',
@@ -4348,22 +4591,37 @@
       }
 
       if (config.provider === PHONE_SMS_PROVIDER_NEXSMS) {
+        const isPremiumActivation = normalizedActivation.source === 'nexsms-premium'
+          || normalizedActivation.nexSmsNumberType === NEX_SMS_NUMBER_TYPE_PREMIUM;
         while (Date.now() - start < timeoutMs) {
           if (maxRounds > 0 && pollCount >= maxRounds) {
             break;
           }
           throwIfStopped();
-          const payload = await fetchNexSmsPayload(
-            config,
-            '/api/sms/messages',
-            'NexSMS get sms messages',
-            {
-              query: {
-                phoneNumber: normalizedActivation.phoneNumber,
-                format: 'json_latest',
-              },
-            }
-          );
+          const payload = isPremiumActivation
+            ? await fetchNexSmsPayload(
+              config,
+              '/api/premium/sms-records',
+              'NexSMS premium sms records',
+              {
+                query: {
+                  page: 1,
+                  pageSize: 10,
+                  tel: normalizedActivation.phoneNumber,
+                },
+              }
+            )
+            : await fetchNexSmsPayload(
+              config,
+              '/api/sms/messages',
+              'NexSMS get sms messages',
+              {
+                query: {
+                  phoneNumber: normalizedActivation.phoneNumber,
+                  format: 'json_latest',
+                },
+              }
+            );
           const text = describeNexSmsPayload(payload);
           lastResponse = text;
           pollCount += 1;
@@ -4379,7 +4637,12 @@
           }
 
           if (isNexSmsSuccessPayload(payload)) {
-            const directCode = extractVerificationCode(payload?.data?.code || payload?.data?.text || '');
+            const premiumSmsItems = isPremiumActivation ? collectNexSmsListItems(payload) : [];
+            const directCode = isPremiumActivation
+              ? premiumSmsItems
+                .map((item) => extractVerificationCode(item?.code || item?.sms || item?.text || item?.message || ''))
+                .find(Boolean)
+              : extractVerificationCode(payload?.data?.code || payload?.data?.text || '');
             if (directCode) {
               return directCode;
             }

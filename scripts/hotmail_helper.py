@@ -239,6 +239,29 @@ def save_local_cpa_json(file_path, content, directory_path=""):
     return str(target_path)
 
 
+def normalize_session_json_filename(file_name):
+    raw = str(file_name or "").strip()
+    if not raw:
+        raw = f"session-{int(time.time())}.json"
+    name = Path(raw).name.strip()
+    if not name or name in {".", ".."}:
+        name = f"session-{int(time.time())}.json"
+    name = re.sub(r"[^A-Za-z0-9._@+-]+", "_", name)
+    if not name.lower().endswith(".json"):
+        name += ".json"
+    return name
+
+
+def save_session_json_to_project(content, file_name=""):
+    if content is None or str(content) == "":
+        raise RuntimeError("Missing content")
+    target_dir = Path(BASE_DIR) / "session_json"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / normalize_session_json_filename(file_name)
+    target_path.write_text(str(content), encoding="utf-8")
+    return str(target_path)
+
+
 def normalize_account_run_snapshot_record(record):
     if not isinstance(record, dict):
         return None
@@ -914,6 +937,17 @@ class HotmailHelperHandler(BaseHTTPRequestHandler):
                     payload.get("filePath"),
                     payload.get("content"),
                     payload.get("directoryPath"),
+                )
+                json_response(self, 200, {
+                    "ok": True,
+                    "filePath": file_path,
+                })
+                return
+
+            if request_path == "/save-session-json":
+                file_path = save_session_json_to_project(
+                    payload.get("content"),
+                    payload.get("fileName"),
                 )
                 json_response(self, 200, {
                     "ok": True,

@@ -26,6 +26,13 @@
     { id: 10, order: 100, key: 'plus-checkout-return', title: '订阅回跳确认', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-return' },
   ];
   const NORMAL_REGISTRATION_PREFIX_STEP_DEFINITIONS = NORMAL_PREFIX_STEP_DEFINITIONS.slice(0, 6);
+  const SAVE_SESSION_JSON_STEP_DEFINITION = {
+    key: 'save-session-json',
+    title: '保存 Session JSON',
+    sourceId: 'chatgpt',
+    driverId: null,
+    command: 'save-session-json',
+  };
 
   const PLUS_PAYPAL_PREFIX_STEP_DEFINITIONS = [
     { id: 1, order: 10, key: 'open-chatgpt', title: '打开 ChatGPT 官网', sourceId: 'chatgpt', driverId: null, command: 'open-chatgpt' },
@@ -177,12 +184,21 @@
   }
 
   function createOpenAiSteps(prefixSteps, startId, startOrder, signupMethod = SIGNUP_METHOD_EMAIL, options = {}) {
+    const shouldInsertSessionJsonStep = prefixSteps.some((step) => step?.key === 'wait-registration-success');
+    const sessionJsonStep = {
+      ...SAVE_SESSION_JSON_STEP_DEFINITION,
+      id: Number(startId) || 7,
+      order: Number(startOrder) || (Number(startId) || 7) * 10,
+    };
+    const tailStartId = shouldInsertSessionJsonStep ? sessionJsonStep.id + 1 : (Number(startId) || 7);
+    const tailStartOrder = shouldInsertSessionJsonStep ? sessionJsonStep.order + 10 : (Number(startOrder) || tailStartId * 10);
     const sessionTailFactory = resolveSessionImportTail(options, signupMethod);
     const tailSteps = sessionTailFactory
-      ? sessionTailFactory(startId, startOrder, signupMethod, options)
-      : createOpenAiAuthTail(startId, startOrder, signupMethod, options);
+      ? sessionTailFactory(tailStartId, tailStartOrder, signupMethod, options)
+      : createOpenAiAuthTail(tailStartId, tailStartOrder, signupMethod, options);
     return [
       ...prefixSteps,
+      ...(shouldInsertSessionJsonStep ? [sessionJsonStep] : []),
       ...tailSteps,
     ];
   }
@@ -224,12 +240,21 @@
   }
 
   function createHostedCheckoutSteps(prefixSteps, startId, startOrder, signupMethod = SIGNUP_METHOD_EMAIL, options = {}) {
+    const shouldInsertSessionJsonStep = prefixSteps.some((step) => step?.key === 'wait-registration-success');
+    const sessionJsonStep = {
+      ...SAVE_SESSION_JSON_STEP_DEFINITION,
+      id: Number(startId) || 7,
+      order: Number(startOrder) || (Number(startId) || 7) * 10,
+    };
+    const tailStartId = shouldInsertSessionJsonStep ? sessionJsonStep.id + 1 : (Number(startId) || 7);
+    const tailStartOrder = shouldInsertSessionJsonStep ? sessionJsonStep.order + 10 : (Number(startOrder) || tailStartId * 10);
     const sessionTailFactory = resolveSessionImportTail(options, signupMethod);
     const tailSteps = sessionTailFactory
-      ? sessionTailFactory(startId, startOrder, signupMethod, options)
-      : createHostedCheckoutAuthTail(startId, startOrder, signupMethod, options);
+      ? sessionTailFactory(tailStartId, tailStartOrder, signupMethod, options)
+      : createHostedCheckoutAuthTail(tailStartId, tailStartOrder, signupMethod, options);
     return [
       ...prefixSteps,
+      ...(shouldInsertSessionJsonStep ? [sessionJsonStep] : []),
       ...tailSteps,
     ];
   }

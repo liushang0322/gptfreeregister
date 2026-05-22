@@ -134,6 +134,25 @@
       return String(value || '').trim();
     }
 
+    function sanitizeSessionJsonFileSegment(value = '') {
+      return normalizeString(value)
+        .replace(/[^A-Za-z0-9._@+-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 120);
+    }
+
+    function buildRegistrationSessionJsonFileName(state = {}, sessionResult = {}) {
+      const email = sanitizeSessionJsonFileSegment(
+        sessionResult?.email
+        || sessionResult?.session?.user?.email
+        || state?.email
+        || state?.registrationEmailState?.current
+        || 'account'
+      ) || 'account';
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      return `${timestamp}-${email}.json`;
+    }
+
     function isLocalCpaJsonNoRtMode(state = {}) {
       return normalizeString(getPanelMode(state)) === LOCAL_CPA_JSON_NO_RT_PANEL_MODE;
     }
@@ -188,6 +207,36 @@
         ...artifact,
         filePath: normalizeString(payload?.filePath) || artifact.filePath,
       };
+    }
+
+    async function saveSessionJsonViaHelper(helperBaseUrl, fileName, jsonText) {
+      const endpoint = typeof buildLocalHelperEndpoint === 'function'
+        ? buildLocalHelperEndpoint(helperBaseUrl, '/save-session-json')
+        : new URL('/save-session-json', `${helperBaseUrl.replace(/\/+$/, '')}/`).toString();
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fileName,
+          content: jsonText,
+        }),
+      });
+
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+        payload = {};
+      }
+
+      if (!response.ok || payload?.ok === false) {
+        throw new Error(normalizeString(payload?.error) || `本地 helper 写入 session_json 失败（HTTP ${response.status}）。`);
+      }
+
+      return normalizeString(payload?.filePath);
     }
 
     async function openChatGptSessionExportTab(state = {}) {
@@ -307,6 +356,41 @@
       };
     }
 
+    async function saveRegistrationSessionJson(state = {}, options = {}) {
+      const visibleStep = Math.max(1, Math.floor(Number(options.visibleStep) || 6));
+      const helperBaseUrl = normalizeHotmailLocalBaseUrl(state.hotmailLocalBaseUrl);
+      if (!helperBaseUrl) {
+        await addLog(`步骤 ${visibleStep}：未配置本地 helper 地址，跳过保存 session_json。`, 'warn');
+        return null;
+      }
+
+      const sessionResult = await readChatGptSessionForExport(state, visibleStep);
+      const api = getLocalCliProxyApi();
+      const artifact = await api.buildAuthJsonArtifact({
+        pluginDir: '/',
+        relativeAuthDir: 'session_json',
+        session: sessionResult?.session,
+        accessToken: sessionResult?.accessToken,
+        sessionToken: sessionResult?.session?.sessionToken,
+        email: sessionResult?.email || sessionResult?.session?.user?.email || state?.email,
+        expiresAt: sessionResult?.expiresAt || sessionResult?.session?.expires,
+        accountId: sessionResult?.session?.account?.id,
+        userId: sessionResult?.session?.user?.id,
+        planType: sessionResult?.session?.account?.planType,
+        lastRefresh: '',
+        sourceName: 'Registration Session JSON',
+      });
+
+      for (const warning of Array.isArray(artifact.warnings) ? artifact.warnings : []) {
+        await addLog(`步骤 ${visibleStep}：保存 session_json 提示：${warning}`, 'warn');
+      }
+
+      const fileName = buildRegistrationSessionJsonFileName(state, sessionResult);
+      const filePath = await saveSessionJsonViaHelper(helperBaseUrl, fileName, artifact.jsonText);
+      await addLog(`步骤 ${visibleStep}：已保存注册后 session JSON：${filePath}`, 'ok');
+      return { filePath };
+    }
+
     async function clearCookiesIfEnabled(state = {}) {
       if (!state?.step6CookieCleanupEnabled) {
         return;
@@ -355,6 +439,14 @@
       await completeNodeFromBackground('wait-registration-success', {});
     }
 
+    async function executeSaveSessionJson(state = {}) {
+      const visibleStep = Math.max(1, Math.floor(Number(state?.visibleStep) || 7));
+      const sessionSaveResult = await saveRegistrationSessionJson(state, { visibleStep });
+      await completeNodeFromBackground(state?.nodeId || 'save-session-json', {
+        ...(sessionSaveResult?.filePath ? { registrationSessionJsonFilePath: sessionSaveResult.filePath } : {}),
+      });
+    }
+
     async function executeLocalCpaJsonNoRtExport(state = {}) {
       if (!isLocalCpaJsonNoRtMode(state)) {
         throw new Error('当前不是本地CPA JSON 无RT 模式，不能执行无RT导出节点。');
@@ -367,6 +459,7 @@
 
     return {
       executeLocalCpaJsonNoRtExport,
+      executeSaveSessionJson,
       executeStep6,
     };
   }

@@ -1490,12 +1490,12 @@
               <span class="data-label">国家优先级</span>
               <div class="data-inline hero-sms-country-stack">
                 <select id="select-hero-sms-country" class="data-input mono" multiple size="6" style="display:none;">
-                  <option value="52" selected>Thailand</option>
+                  <option value="151">Chile</option>
                 </select>
                 <div class="hero-sms-country-mainline">
                   <div id="hero-sms-country-menu-shell" class="hero-sms-country-menu">
                     <button id="btn-hero-sms-country-menu" class="btn btn-outline btn-sm hero-sms-country-menu-btn" type="button" aria-haspopup="listbox" aria-expanded="false">
-                      Thailand (1/3)
+                      未选择 (0/3)
                     </button>
                     <div id="hero-sms-country-menu" class="hero-sms-country-menu-dropdown" role="listbox" aria-multiselectable="true" hidden></div>
                   </div>
@@ -1582,6 +1582,66 @@
                   data-hide-label="隐藏 NexSMS API Key" aria-label="显示 NexSMS API Key" title="显示 NexSMS API Key"></button>
               </div>
             </div>
+            <div class="data-row" id="row-nex-sms-number-type" style="display:none;">
+              <span class="data-label">号码类型</span>
+              <select id="select-nex-sms-number-type" class="data-input mono">
+                <option value="normal">普通号码</option>
+                <option value="premium">优选号码</option>
+              </select>
+            </div>
+            <div class="data-row" id="row-nex-sms-premium-settings" style="display:none;">
+              <span class="data-label">优选号码</span>
+              <div class="data-inline hero-sms-settings-grid">
+                <div class="hero-sms-settings-cell">
+                  <span class="hero-sms-settings-caption">服务</span>
+                  <div class="setting-controls">
+                    <input type="text" id="input-nex-sms-premium-app-query" class="data-input mono" placeholder="OpenAI" />
+                  </div>
+                </div>
+                <div class="hero-sms-settings-cell">
+                  <span class="hero-sms-settings-caption">分类</span>
+                  <div class="setting-controls">
+                    <select id="select-nex-sms-premium-cate-id" class="data-input mono">
+                      <option value="3">加拿大 ixica (#3)</option>
+                      <option value="5">美国实卡 (#5)</option>
+                      <option value="6">英国卡 (#6)</option>
+                      <option value="2">美国新运营商 (#2)</option>
+                      <option value="4">香港卡 (#4)</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="hero-sms-settings-cell">
+                  <span class="hero-sms-settings-caption">卡类型</span>
+                  <div class="setting-controls">
+                    <select id="select-nex-sms-premium-card-type" class="data-input mono">
+                      <option value="1">首次卡</option>
+                      <option value="2">重启卡</option>
+                      <option value="3">续费卡</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="hero-sms-settings-cell">
+                  <span class="hero-sms-settings-caption">有效期</span>
+                  <div class="setting-controls">
+                    <select id="select-nex-sms-premium-expiry" class="data-input mono">
+                      <option value="0">随机</option>
+                      <option value="1">5-30 天</option>
+                      <option value="2">10-30 天</option>
+                      <option value="3">15-30 天</option>
+                      <option value="4">30-60 天</option>
+                      <option value="5">60-80 天</option>
+                      <option value="6">大于 80 天</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="hero-sms-settings-cell">
+                  <span class="hero-sms-settings-caption">前缀</span>
+                  <div class="setting-controls">
+                    <input type="text" id="input-nex-sms-premium-prefix" class="data-input mono" placeholder="可空，例如 1201,1202" />
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="data-row" id="row-nex-sms-country" style="display:none;">
               <span class="data-label">国家优先级</span>
               <div class="data-inline hero-sms-country-stack">
@@ -1595,8 +1655,11 @@
                     </button>
                     <div id="nex-sms-country-menu" class="hero-sms-country-menu-dropdown" role="listbox" aria-multiselectable="true" hidden></div>
                   </div>
+                  <button id="btn-nex-sms-country-refresh" class="btn btn-ghost btn-xs data-inline-btn" type="button">刷新国家</button>
+                  <input type="number" id="input-nex-sms-country-id" class="data-input mono hero-sms-max-price-input" placeholder="国家ID" min="0" step="1" />
+                  <button id="btn-nex-sms-country-add" class="btn btn-ghost btn-xs data-inline-btn" type="button">添加ID</button>
                 </div>
-                <span class="data-value hero-sms-country-note">多选最多 3 个，按点击顺序生效。</span>
+                <span class="data-value hero-sms-country-note">多选最多 10 个，按点击顺序生效；可刷新完整列表，也可手动添加任意国家 ID。</span>
               </div>
             </div>
             <div class="data-row" id="row-nex-sms-country-fallback" style="display:none;">
@@ -1608,8 +1671,18 @@
             </div>
             <div class="data-row" id="row-nex-sms-service-code" style="display:none;">
               <span class="data-label">服务代码</span>
-              <input type="text" id="input-nex-sms-service-code" class="data-input mono"
-                placeholder="ot" />
+              <div class="data-inline hero-sms-country-stack">
+                <div class="data-inline data-value-actions">
+                  <input type="text" id="input-nex-sms-service-code" class="data-input mono"
+                    placeholder="ot" />
+                  <select id="select-nex-sms-service-code" class="data-input mono">
+                    <option value="ot">Any other (ot)</option>
+                    <option value="dr">OpenAI (dr)</option>
+                  </select>
+                  <button id="btn-nex-sms-service-refresh" class="btn btn-ghost btn-xs data-inline-btn" type="button">刷新服务</button>
+                </div>
+                <span class="data-value hero-sms-country-note">可从列表选择，也可直接手填 serviceCode。</span>
+              </div>
             </div>
             <div class="data-row" id="row-hero-sms-max-price" style="display:none;">
               <span class="data-label">价格区间</span>

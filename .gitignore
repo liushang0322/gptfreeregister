@@ -16,3 +16,4 @@ __pycache__/
 /release-artifacts/
 # Local exported runtime settings
 /config.json
+/session_json/
