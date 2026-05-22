@@ -414,10 +414,8 @@
       return Math.max(0, Number(STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS) || 0);
     }
 
-    function shouldUseManualPostLoginPhoneVerification(state = {}) {
-      return String(state?.panelMode || '').trim().toLowerCase() === 'sub2api'
-        && Boolean(state?.localCpaJsonPkceCodes?.codeVerifier);
-    }
+    // 已移除手动手机号验证等待限制
+    // phoneVerificationEnabled 开启时统一走完整接码自动化流程
 
     async function executeLoginPhoneCodeStep(state, signupTabId, visibleStep) {
       if (!Number.isInteger(signupTabId)) {
@@ -542,7 +540,7 @@
       if (pageState?.state !== 'add_phone_page' && pageState?.state !== 'phone_verification_page') {
         throw new Error(`步骤 ${visibleStep}：手机号验证步骤只处理添加手机号页或手机验证码页，当前状态：${pageState?.state || 'unknown'}。URL: ${pageState?.url || ''}`.trim());
       }
-      if (!state?.phoneVerificationEnabled || shouldUseManualPostLoginPhoneVerification(state)) {
+      if (!state?.phoneVerificationEnabled) {
         return waitForManualPostLoginPhoneContinuation(state, visibleStep);
       }
       if (typeof phoneVerificationHelpers?.completePhoneVerificationFlow !== 'function') {
