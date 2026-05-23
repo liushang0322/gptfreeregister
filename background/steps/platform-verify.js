@@ -529,12 +529,20 @@
 
     async function executeSub2ApiSessionJsonStep10(state) {
       const platformVerifyStep = resolvePlatformVerifyStep(state);
-      if (normalizeString(state?.sub2apiAccountJsonFilePath)) {
-        const verifiedStatus = `SUB2API 账号 JSON 已在保存 Session JSON 步骤导出：${state.sub2apiAccountJsonFilePath}`;
+      if (state?.sub2apiImportedFromSessionJson && normalizeString(state?.sub2apiAccountJsonFilePath)) {
+        const verifiedStatus = normalizeString(state?.verifiedStatus)
+          || `SUB2API 账号 JSON 已在保存 Session JSON 步骤导出并导入：${state.sub2apiAccountJsonFilePath}`;
         await addStepLog(platformVerifyStep, verifiedStatus, 'ok');
         await completeNodeFromBackground(state?.nodeId || 'platform-verify', {
           verifiedStatus,
           sub2apiAccountJsonFilePath: state.sub2apiAccountJsonFilePath,
+          sub2apiImportedFromSessionJson: true,
+          ...(state?.sub2apiImportTotal !== undefined ? { sub2apiImportTotal: state.sub2apiImportTotal } : {}),
+          ...(state?.sub2apiImportCreated !== undefined ? { sub2apiImportCreated: state.sub2apiImportCreated } : {}),
+          ...(state?.sub2apiImportUpdated !== undefined ? { sub2apiImportUpdated: state.sub2apiImportUpdated } : {}),
+          ...(state?.sub2apiImportSkipped !== undefined ? { sub2apiImportSkipped: state.sub2apiImportSkipped } : {}),
+          ...(state?.sub2apiImportFailed !== undefined ? { sub2apiImportFailed: state.sub2apiImportFailed } : {}),
+          ...(state?.sub2apiFallbackMode ? { sub2apiFallbackMode: state.sub2apiFallbackMode } : {}),
         });
         return;
       }
@@ -584,13 +592,27 @@
       const fileName = buildSub2ApiAccountJsonFileName(session, state);
       const jsonText = `${JSON.stringify(accountDataPayload, null, 2)}\n`;
       const filePath = await saveProjectJsonViaHelper(helperBaseUrl, fileName, jsonText);
-      const verifiedStatus = `已导出带 RT 的 SUB2API 账号 JSON：${filePath}`;
+      const importResult = await sub2Api.importAccountDataPayload(state, accountDataPayload, {
+        visibleStep: platformVerifyStep,
+        logLabel: `步骤 ${platformVerifyStep}`,
+        logOptions: { step: platformVerifyStep, stepKey: 'platform-verify' },
+        timeoutMs: 120000,
+        importTimeoutMs: 120000,
+      });
+      const verifiedStatus = `${importResult.verifiedStatus || 'SUB2API 账号 JSON 自动导入完成'}；导出文件：${filePath}`;
       await addStepLog(platformVerifyStep, verifiedStatus, 'ok');
 
       await completeNodeFromBackground(state?.nodeId || 'platform-verify', {
         localhostUrl: callback.url,
         verifiedStatus,
         sub2apiAccountJsonFilePath: filePath,
+        sub2apiImportedFromSessionJson: true,
+        ...(importResult?.sub2apiImportTotal !== undefined ? { sub2apiImportTotal: importResult.sub2apiImportTotal } : {}),
+        ...(importResult?.sub2apiImportCreated !== undefined ? { sub2apiImportCreated: importResult.sub2apiImportCreated } : {}),
+        ...(importResult?.sub2apiImportUpdated !== undefined ? { sub2apiImportUpdated: importResult.sub2apiImportUpdated } : {}),
+        ...(importResult?.sub2apiImportSkipped !== undefined ? { sub2apiImportSkipped: importResult.sub2apiImportSkipped } : {}),
+        ...(importResult?.sub2apiImportFailed !== undefined ? { sub2apiImportFailed: importResult.sub2apiImportFailed } : {}),
+        ...(importResult?.sub2apiFallbackMode ? { sub2apiFallbackMode: importResult.sub2apiFallbackMode } : {}),
       });
     }
 

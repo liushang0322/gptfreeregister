@@ -879,17 +879,38 @@
       const fileName = buildSub2ApiAccountJsonFileName(session, state);
       const jsonText = `${JSON.stringify(accountDataPayload, null, 2)}\n`;
       const filePath = await saveSessionJsonViaHelper(helperBaseUrl, fileName, jsonText, { visibleStep });
+      const importResult = await getSub2ApiApi().importCurrentChatGptSession({
+        ...state,
+        session,
+        accessToken: tokenBundle.accessToken,
+      }, {
+        visibleStep,
+        logLabel: `步骤 ${visibleStep}`,
+        logOptions: { step: visibleStep, stepKey: SAVE_SESSION_JSON_NODE_ID },
+        timeoutMs: 120000,
+        importTimeoutMs: 120000,
+      });
       await setState({
         registrationSessionJsonFilePath: filePath,
         sub2apiAccountJsonFilePath: filePath,
+        sub2apiImportedFromSessionJson: true,
         localhostUrl: tokenExchange.callback.url,
+        ...(importResult?.verifiedStatus ? { verifiedStatus: importResult.verifiedStatus } : {}),
+        ...(importResult?.sub2apiImportTotal !== undefined ? { sub2apiImportTotal: importResult.sub2apiImportTotal } : {}),
+        ...(importResult?.sub2apiImportCreated !== undefined ? { sub2apiImportCreated: importResult.sub2apiImportCreated } : {}),
+        ...(importResult?.sub2apiImportUpdated !== undefined ? { sub2apiImportUpdated: importResult.sub2apiImportUpdated } : {}),
+        ...(importResult?.sub2apiImportSkipped !== undefined ? { sub2apiImportSkipped: importResult.sub2apiImportSkipped } : {}),
+        ...(importResult?.sub2apiImportFailed !== undefined ? { sub2apiImportFailed: importResult.sub2apiImportFailed } : {}),
+        ...(importResult?.sub2apiFallbackMode ? { sub2apiFallbackMode: importResult.sub2apiFallbackMode } : {}),
       });
-      await addLog(`步骤 ${visibleStep}：已获取 RT 并保存 SUB2API 可导入 JSON：${filePath}`, 'ok', {
+      await addLog(`步骤 ${visibleStep}：已获取 RT、保存 SUB2API 账号 JSON 并自动导入：${filePath}`, 'ok', {
         step: visibleStep,
         stepKey: SAVE_SESSION_JSON_NODE_ID,
       });
       return {
         filePath,
+        sub2apiImported: true,
+        ...importResult,
         localhostUrl: tokenExchange.callback.url,
       };
     }
@@ -997,6 +1018,14 @@
       await completeNodeFromBackground(state?.nodeId || 'save-session-json', {
         ...(sessionSaveResult?.filePath ? { registrationSessionJsonFilePath: sessionSaveResult.filePath } : {}),
         ...(sessionSaveResult?.filePath && isSub2ApiCodexSessionMode(state) ? { sub2apiAccountJsonFilePath: sessionSaveResult.filePath } : {}),
+        ...(sessionSaveResult?.sub2apiImported ? { sub2apiImportedFromSessionJson: true } : {}),
+        ...(sessionSaveResult?.verifiedStatus ? { verifiedStatus: sessionSaveResult.verifiedStatus } : {}),
+        ...(sessionSaveResult?.sub2apiImportTotal !== undefined ? { sub2apiImportTotal: sessionSaveResult.sub2apiImportTotal } : {}),
+        ...(sessionSaveResult?.sub2apiImportCreated !== undefined ? { sub2apiImportCreated: sessionSaveResult.sub2apiImportCreated } : {}),
+        ...(sessionSaveResult?.sub2apiImportUpdated !== undefined ? { sub2apiImportUpdated: sessionSaveResult.sub2apiImportUpdated } : {}),
+        ...(sessionSaveResult?.sub2apiImportSkipped !== undefined ? { sub2apiImportSkipped: sessionSaveResult.sub2apiImportSkipped } : {}),
+        ...(sessionSaveResult?.sub2apiImportFailed !== undefined ? { sub2apiImportFailed: sessionSaveResult.sub2apiImportFailed } : {}),
+        ...(sessionSaveResult?.sub2apiFallbackMode ? { sub2apiFallbackMode: sessionSaveResult.sub2apiFallbackMode } : {}),
         ...(sessionSaveResult?.deferredOAuthRt ? { deferredOAuthRt: true } : {}),
         ...(sessionSaveResult?.reason ? { saveSessionJsonDeferredReason: sessionSaveResult.reason } : {}),
         ...(sessionSaveResult?.oauthState ? { localCpaJsonOAuthState: sessionSaveResult.oauthState } : {}),

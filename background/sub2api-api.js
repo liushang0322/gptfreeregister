@@ -904,6 +904,37 @@
       return dataImportResult;
     }
 
+    async function importAccountDataPayload(state = {}, dataPayload = {}, options = {}) {
+      const logLabel = normalizeString(options.logLabel) || 'SUB2API 数据文件导入';
+      await logWithOptions(`${logLabel}：正在通过 SUB2API 管理接口登录并导入账号 JSON...`, 'info', options);
+      const { origin, token } = await loginSub2Api(state, options);
+      const dataImportResult = normalizeAccountDataImportResult(await requestJson(origin, '/api/v1/admin/accounts/data', {
+        method: 'POST',
+        token,
+        timeoutMs: options.importTimeoutMs || options.timeoutMs,
+        body: {
+          data: dataPayload,
+          skip_default_group_bind: Boolean(options.skipDefaultGroupBind ?? true),
+        },
+      }));
+
+      if (dataImportResult.failed > 0 || dataImportResult.created <= 0) {
+        throw new Error(getAccountDataImportFailureMessage(dataImportResult));
+      }
+
+      const verifiedStatus = `SUB2API 数据文件导入完成：新建账号 ${dataImportResult.created}，代理新建 ${dataImportResult.proxyCreated}，代理复用 ${dataImportResult.proxyReused}`;
+      await logWithOptions(verifiedStatus, 'ok', options);
+      return {
+        verifiedStatus,
+        sub2apiImportTotal: dataImportResult.created,
+        sub2apiImportCreated: dataImportResult.created,
+        sub2apiImportUpdated: 0,
+        sub2apiImportSkipped: 0,
+        sub2apiImportFailed: dataImportResult.failed,
+        sub2apiFallbackMode: 'accounts-data',
+      };
+    }
+
     async function logWithOptions(message, level = 'info', options = {}) {
       await addLog(message, level, options.logOptions || {});
     }
@@ -1212,6 +1243,7 @@
       extractStateFromAuthUrl,
       generateOpenAiAuthUrl,
       getGroupsByNames,
+      importAccountDataPayload,
       importCurrentChatGptSession,
       loginSub2Api,
       normalizeProxyId,

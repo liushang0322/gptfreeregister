@@ -13044,6 +13044,16 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
         throw err;
       }
 
+      if (nodeId === 'save-session-json') {
+        await addLog(
+          `自动运行：节点 save-session-json 本轮执行失败，将跳过该节点并继续刷新 OAuth 登录。原因：${getErrorMessage(err)}`,
+          'warn'
+        );
+        await setNodeStatus(nodeId, 'skipped');
+        nodeIndex += 1;
+        continue;
+      }
+
       if (await restartCurrentNodeAfterIdle(nodeId, err)) {
         continue;
       }

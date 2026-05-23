@@ -256,6 +256,10 @@
       return /no\s+numbers\s+available\s+across|all provider candidates failed to acquire number|no\s+free\s+phones|numbers?\s+not\s+found|no\s+numbers\s+within\s+maxprice|countries\s+are\s+empty|均无可用号码|暂无可用号码|无可用号码|接码号池暂无|\bNO_NUMBERS\b/i.test(text);
     }
 
+    function shouldContinueNextRoundAfterPhoneFailure(totalRuns, targetRun) {
+      return Number(totalRuns) > 1 && Number(targetRun) < Number(totalRuns);
+    }
+
     async function logAutoRunFinalSummary(totalRuns, roundSummaries = []) {
       const summaries = buildAutoRunRoundSummaries(totalRuns, roundSummaries);
       const successRounds = summaries.filter((item) => item.status === 'success');
@@ -704,7 +708,7 @@
               await appendRoundRecordIfNeeded('failed', reason, err);
               cancelPendingCommands('当前轮因认证流程进入 add-phone 已终止。');
               await broadcastStopToContentScripts();
-              if (!autoRunSkipFailures) {
+              if (!autoRunSkipFailures && !shouldContinueNextRoundAfterPhoneFailure(totalRuns, targetRun)) {
                 await addLog(
                   `第 ${targetRun}/${totalRuns} 轮触发 add-phone/手机号页，自动重试未开启，当前自动运行将停止。`,
                   'warn'
@@ -719,7 +723,12 @@
                 break;
               }
 
-              await addLog(`第 ${targetRun}/${totalRuns} 轮触发 add-phone/手机号页，本轮将直接失败并跳过剩余重试。`, 'warn');
+              await addLog(
+                autoRunSkipFailures
+                  ? `第 ${targetRun}/${totalRuns} 轮触发 add-phone/手机号页，本轮将直接失败并跳过剩余重试。`
+                  : `第 ${targetRun}/${totalRuns} 轮触发 add-phone/手机号页，本轮记为失败并继续下一轮。`,
+                'warn'
+              );
               await addLog(
                 targetRun < totalRuns
                   ? `第 ${targetRun}/${totalRuns} 轮因 add-phone/手机号页提前结束，自动流程将继续下一轮。`
@@ -739,7 +748,7 @@
               await appendRoundRecordIfNeeded('failed', reason, err);
               cancelPendingCommands('当前轮因接码号池暂无可用号码已终止。');
               await broadcastStopToContentScripts();
-              if (!autoRunSkipFailures) {
+              if (!autoRunSkipFailures && !shouldContinueNextRoundAfterPhoneFailure(totalRuns, targetRun)) {
                 await addLog(
                   `第 ${targetRun}/${totalRuns} 轮接码号池暂无可用号码，自动重试未开启，当前自动运行将停止。`,
                   'warn'
@@ -754,7 +763,12 @@
                 break;
               }
 
-              await addLog(`第 ${targetRun}/${totalRuns} 轮接码号池暂无可用号码，本轮将直接失败并跳过剩余重试。`, 'warn');
+              await addLog(
+                autoRunSkipFailures
+                  ? `第 ${targetRun}/${totalRuns} 轮接码号池暂无可用号码，本轮将直接失败并跳过剩余重试。`
+                  : `第 ${targetRun}/${totalRuns} 轮接码号池暂无可用号码，本轮记为失败并继续下一轮。`,
+                'warn'
+              );
               await addLog(
                 targetRun < totalRuns
                   ? `第 ${targetRun}/${totalRuns} 轮因接码号池暂无可用号码提前结束，自动流程将继续下一轮。`
