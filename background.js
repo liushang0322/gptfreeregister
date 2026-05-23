@@ -8857,8 +8857,9 @@ function isLocalhostOAuthCallbackUrl(rawUrl) {
   if (!['localhost', '127.0.0.1'].includes(parsed.hostname)) return false;
   if (!['/auth/callback', '/codex/callback'].includes(parsed.pathname)) return false;
   const code = (parsed.searchParams.get('code') || '').trim();
+  const error = (parsed.searchParams.get('error') || '').trim();
   const state = (parsed.searchParams.get('state') || '').trim();
-  return Boolean(code && state);
+  return Boolean((code || error) && state);
 }
 
 function isLocalCpaUrl(rawUrl) {
@@ -13538,14 +13539,23 @@ const step6Executor = self.MultiPageBackgroundStep6?.createStep6Executor({
   chrome,
   completeNodeFromBackground,
   createLocalCliProxyApi: self.MultiPageBackgroundLocalCliProxyApi?.createLocalCliProxyApi,
+  createSub2ApiApi: self.MultiPageBackgroundSub2ApiApi?.createSub2ApiApi,
   ensureContentScriptReadyOnTab,
   getErrorMessage,
   getPanelMode,
   getTabId,
+  isLocalhostOAuthCallbackUrl,
+  isTabAlive,
   normalizeHotmailLocalBaseUrl,
+  normalizeSub2ApiUrl,
+  registerTab,
+  reuseOrCreateTab,
   registrationSuccessWaitMs: STEP6_REGISTRATION_SUCCESS_WAIT_MS,
+  signupPageInjectFiles: SIGNUP_PAGE_INJECT_FILES,
   sendToContentScriptResilient,
+  setState,
   sleepWithStop,
+  DEFAULT_SUB2API_GROUP_NAME,
 });
 const step7Executor = self.MultiPageBackgroundStep7?.createStep7Executor({
   addLog,

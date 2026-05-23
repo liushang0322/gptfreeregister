@@ -657,6 +657,8 @@
         if (payload.codex2apiOAuthState !== undefined) updates.codex2apiOAuthState = payload.codex2apiOAuthState || null;
         if (payload.localCpaJsonOAuthState !== undefined) updates.localCpaJsonOAuthState = payload.localCpaJsonOAuthState || null;
         if (payload.localCpaJsonPkceCodes !== undefined) updates.localCpaJsonPkceCodes = payload.localCpaJsonPkceCodes || null;
+        if (payload.deferredOAuthRt !== undefined) updates.deferredOAuthRt = Boolean(payload.deferredOAuthRt);
+        if (payload.saveSessionJsonDeferredReason !== undefined) updates.saveSessionJsonDeferredReason = payload.saveSessionJsonDeferredReason || '';
         if (Object.keys(updates).length) {
           await setState(updates);
         }
@@ -727,11 +729,15 @@
       }
 
       if (stepKey === 'post-login-phone-verification' || stepKey === 'post-bound-email-phone-verification') {
-        await setState({
+        const updates = {
           currentPhoneVerificationCode: '',
           signupPhoneVerificationRequestedAt: null,
           signupPhoneVerificationPurpose: '',
-        });
+        };
+        if (payload.directOAuthConsentPage) {
+          updates.loginVerificationRequestedAt = null;
+        }
+        await setState(updates);
         return;
       }
 
@@ -805,6 +811,8 @@
           if (payload.codex2apiOAuthState !== undefined) updates.codex2apiOAuthState = payload.codex2apiOAuthState || null;
           if (payload.localCpaJsonOAuthState !== undefined) updates.localCpaJsonOAuthState = payload.localCpaJsonOAuthState || null;
           if (payload.localCpaJsonPkceCodes !== undefined) updates.localCpaJsonPkceCodes = payload.localCpaJsonPkceCodes || null;
+          if (payload.deferredOAuthRt !== undefined) updates.deferredOAuthRt = Boolean(payload.deferredOAuthRt);
+          if (payload.saveSessionJsonDeferredReason !== undefined) updates.saveSessionJsonDeferredReason = payload.saveSessionJsonDeferredReason || '';
           if (Object.keys(updates).length) {
             await setState(updates);
           }

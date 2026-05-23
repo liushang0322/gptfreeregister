@@ -199,8 +199,20 @@
       return String(visibleSpan?.textContent || '').trim();
     }
 
-    function toNationalPhoneNumber(value, dialCode) {
+    function normalizePhoneDigitsForDialCode(value, dialCode) {
       const digits = normalizePhoneDigits(value);
+      const normalizedDialCode = normalizePhoneDigits(dialCode);
+      if (!digits) {
+        return '';
+      }
+      if (normalizedDialCode && digits.startsWith(`0${normalizedDialCode}`) && digits.length > normalizedDialCode.length + 1) {
+        return digits.slice(1);
+      }
+      return digits;
+    }
+
+    function toNationalPhoneNumber(value, dialCode) {
+      const digits = normalizePhoneDigitsForDialCode(value, dialCode);
       const normalizedDialCode = normalizePhoneDigits(dialCode);
       const isExplicitInternational = isExplicitInternationalPhoneInput(value);
       if (!digits) {
@@ -216,7 +228,7 @@
     }
 
     function toE164PhoneNumber(value, dialCode) {
-      const digits = normalizePhoneDigits(value);
+      const digits = normalizePhoneDigitsForDialCode(value, dialCode);
       const normalizedDialCode = normalizePhoneDigits(dialCode);
       const isExplicitInternational = isExplicitInternationalPhoneInput(value);
       if (!digits) {

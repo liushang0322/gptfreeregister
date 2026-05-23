@@ -112,8 +112,9 @@
       if (!['/auth/callback', '/codex/callback'].includes(parsed.pathname)) return false;
 
       const code = (parsed.searchParams.get('code') || '').trim();
+      const error = (parsed.searchParams.get('error') || '').trim();
       const state = (parsed.searchParams.get('state') || '').trim();
-      return Boolean(code && state);
+      return Boolean((code || error) && state);
     }
 
     function isLocalCpaUrl(rawUrl) {

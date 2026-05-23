@@ -444,6 +444,11 @@ function parseLocalhostCallback(rawUrl, visibleStep = 10) {
 
   const code = (parsed.searchParams.get('code') || '').trim();
   const state = (parsed.searchParams.get('state') || '').trim();
+  const error = (parsed.searchParams.get('error') || '').trim();
+  const errorDescription = (parsed.searchParams.get('error_description') || '').trim();
+  if (error) {
+    throw new Error(errorDescription ? `OAuth 回调失败：${errorDescription}` : `OAuth 回调失败：${error}`);
+  }
   if (!code || !state) {
     throw new Error('回调 URL 中缺少 code 或 state。');
   }

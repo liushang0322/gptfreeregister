@@ -617,6 +617,11 @@
 
       const code = normalizeString(parsed.searchParams.get('code'));
       const oauthState = normalizeString(parsed.searchParams.get('state'));
+      const error = normalizeString(parsed.searchParams.get('error'));
+      const errorDescription = normalizeString(parsed.searchParams.get('error_description'));
+      if (error) {
+        throw new Error(errorDescription ? `OAuth 回调失败：${errorDescription}` : `OAuth 回调失败：${error}`);
+      }
       if (!code || !oauthState) {
         throw new Error('回调 URL 中缺少 code 或 state。');
       }
@@ -845,11 +850,28 @@
     }
 
     function buildCodexSessionAccountDataPayload(options = {}) {
-      const createPayload = buildCodexSessionDirectCreatePayload(options);
-      const { group_ids: _groupIds, proxy_id: _proxyId, load_factor: _loadFactor, ...account } = createPayload;
-      const expiresAt = normalizeCodexUnixSeconds(createPayload.expires_at)
-        || normalizeCodexUnixSeconds(createPayload.credentials?.expires_at);
-      const autoPauseOnExpired = createPayload.auto_pause_on_expired;
+      const credentials = buildOpenAiCredentialsFromCodexSession(options.session, options.accessToken);
+      const extra = buildOpenAiExtraFromCodexSession(options.session);
+      const accountPriority = options.accountPriority === undefined
+        ? DEFAULT_PRIORITY
+        : Number(options.accountPriority);
+      const account = {
+        name: normalizeString(options.preferredAccountName)
+          || credentials.email
+          || buildDraftAccountName(options.state?.sub2apiGroupName || DEFAULT_SUB2API_GROUP_NAME),
+        notes: '',
+        platform: 'openai',
+        type: 'oauth',
+        credentials,
+        concurrency: DEFAULT_CONCURRENCY,
+        priority: Number.isSafeInteger(accountPriority) && accountPriority > 0 ? accountPriority : DEFAULT_PRIORITY,
+        rate_multiplier: DEFAULT_RATE_MULTIPLIER,
+      };
+      const expiresAt = normalizeCodexUnixSeconds(credentials.expires_at);
+      const autoPauseOnExpired = true;
+      if (extra) {
+        account.extra = extra;
+      }
       return {
         type: 'sub2api-data',
         version: 1,
@@ -1183,6 +1205,7 @@
     return {
       buildDraftAccountName,
       buildCodexSessionImportContent,
+      buildCodexSessionAccountDataPayload,
       buildOpenAiCredentials,
       buildOpenAiExtra,
       buildProxyDisplayName,

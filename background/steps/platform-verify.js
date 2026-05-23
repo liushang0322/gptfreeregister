@@ -46,6 +46,25 @@
       return sub2ApiApi;
     }
 
+    function sanitizeExportFileSegment(value = '') {
+      return normalizeString(value)
+        .replace(/[^A-Za-z0-9._@+-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 120);
+    }
+
+    function buildSub2ApiAccountJsonFileName(session = {}, state = {}) {
+      const email = sanitizeExportFileSegment(
+        session?.email
+        || session?.user?.email
+        || state?.email
+        || state?.registrationEmailState?.current
+        || 'account'
+      ) || 'account';
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      return `${timestamp}-${email}-sub2api.json`;
+    }
+
     function normalizeString(value = '') {
       return String(value || '').trim();
     }
@@ -114,6 +133,11 @@
 
       const code = normalizeString(parsed.searchParams.get('code'));
       const state = normalizeString(parsed.searchParams.get('state'));
+      const error = normalizeString(parsed.searchParams.get('error'));
+      const errorDescription = normalizeString(parsed.searchParams.get('error_description'));
+      if (error) {
+        throw new Error(errorDescription ? `OAuth 回调失败：${errorDescription}` : `OAuth 回调失败：${error}`);
+      }
       if (!code || !state) {
         throw new Error(`步骤 ${platformVerifyStep} 捕获到的 localhost OAuth 回调地址缺少 code 或 state，请重新执行步骤 ${confirmOauthStep}。`);
       }
@@ -301,6 +325,36 @@
       };
     }
 
+    async function saveProjectJsonViaHelper(helperBaseUrl, fileName, jsonText) {
+      const endpoint = typeof buildLocalHelperEndpoint === 'function'
+        ? buildLocalHelperEndpoint(helperBaseUrl, '/save-session-json')
+        : new URL('/save-session-json', `${helperBaseUrl.replace(/\/+$/, '')}/`).toString();
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fileName,
+          content: jsonText,
+        }),
+      });
+
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+        payload = {};
+      }
+
+      if (!response.ok || payload?.ok === false) {
+        throw new Error(normalizeString(payload?.error) || `本地 helper 写入导出 JSON 失败（HTTP ${response.status}）。`);
+      }
+
+      return normalizeString(payload?.filePath);
+    }
+
     async function executeStep10(state) {
       if (getPanelMode(state) === 'local-cpa-json') {
         return executeLocalCpaJsonStep10(state);
@@ -475,6 +529,15 @@
 
     async function executeSub2ApiSessionJsonStep10(state) {
       const platformVerifyStep = resolvePlatformVerifyStep(state);
+      if (normalizeString(state?.sub2apiAccountJsonFilePath)) {
+        const verifiedStatus = `SUB2API 账号 JSON 已在保存 Session JSON 步骤导出：${state.sub2apiAccountJsonFilePath}`;
+        await addStepLog(platformVerifyStep, verifiedStatus, 'ok');
+        await completeNodeFromBackground(state?.nodeId || 'platform-verify', {
+          verifiedStatus,
+          sub2apiAccountJsonFilePath: state.sub2apiAccountJsonFilePath,
+        });
+        return;
+      }
       const confirmOauthStep = resolveConfirmOauthStep(platformVerifyStep);
       const authLoginStep = resolveAuthLoginStep(platformVerifyStep);
       if (state.localhostUrl && !isLocalhostOAuthCallbackUrl(state.localhostUrl)) {
@@ -493,7 +556,7 @@
         throw new Error(`SUB2API SESSION JSON 回调 state 与当前授权会话不匹配，请重新执行步骤 ${authLoginStep}。`);
       }
 
-      await addStepLog(platformVerifyStep, '正在交换 OAuth 授权码并导入 Codex JSON 到 SUB2API...');
+      await addStepLog(platformVerifyStep, '正在交换 OAuth 授权码并生成带 RT 的 SUB2API 导入账号 JSON...');
       const localApi = getLocalCliProxyApi();
       const tokenBundle = await localApi.exchangeCodeForTokens({
         code: callback.code,
@@ -506,23 +569,28 @@
         refreshToken: tokenBundle.refreshToken,
         idToken: tokenBundle.idToken,
         expiresAt: tokenBundle.expiresAt || getTokenExpiresAt(tokenBundle.accessToken),
+        email: normalizeString(state?.email || state?.registrationEmailState?.current),
       };
-      const result = await sub2Api.importCurrentChatGptSession({
-        ...state,
+      const helperBaseUrl = normalizeHotmailLocalBaseUrl(state.hotmailLocalBaseUrl);
+      if (!helperBaseUrl) {
+        throw new Error('尚未配置 Hotmail 本地助手地址，请先在侧边栏填写。');
+      }
+      const accountDataPayload = sub2Api.buildCodexSessionAccountDataPayload({
+        state,
         session,
         accessToken: tokenBundle.accessToken,
-      }, {
-        visibleStep: platformVerifyStep,
-        logLabel: `步骤 ${platformVerifyStep}`,
-        logOptions: { step: platformVerifyStep, stepKey: 'platform-verify' },
-        timeoutMs: 120000,
-        importTimeoutMs: 120000,
+        preferredAccountName: normalizeString(state?.email || state?.registrationEmailState?.current),
       });
+      const fileName = buildSub2ApiAccountJsonFileName(session, state);
+      const jsonText = `${JSON.stringify(accountDataPayload, null, 2)}\n`;
+      const filePath = await saveProjectJsonViaHelper(helperBaseUrl, fileName, jsonText);
+      const verifiedStatus = `已导出带 RT 的 SUB2API 账号 JSON：${filePath}`;
+      await addStepLog(platformVerifyStep, verifiedStatus, 'ok');
 
       await completeNodeFromBackground(state?.nodeId || 'platform-verify', {
         localhostUrl: callback.url,
-        verifiedStatus: result?.verifiedStatus || 'SUB2API Codex JSON 导入完成',
-        ...result,
+        verifiedStatus,
+        sub2apiAccountJsonFilePath: filePath,
       });
     }
 

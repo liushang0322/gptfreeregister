@@ -1378,9 +1378,20 @@
             ? normalizeNexSmsCountryId(rawCountryId, 0)
             : normalizeCountryId(rawCountryId, fallbackCountryId)
         );
+      const normalizedPhoneNumber = (() => {
+        const trimmed = phoneNumber.trim();
+        const digits = String(trimmed || '').replace(/\D+/g, '');
+        const dialCode = provider === PHONE_SMS_PROVIDER_NEXSMS
+          ? inferHeroSmsCountryFromPhoneNumber(trimmed)?.prefix || ''
+          : '';
+        if (dialCode && digits.startsWith(`0${dialCode}`) && digits.length > dialCode.length + 1) {
+          return trimmed.replace(/^\s*\+?0+/, '+');
+        }
+        return trimmed;
+      })();
       return {
         activationId,
-        phoneNumber,
+        phoneNumber: normalizedPhoneNumber,
         provider,
         serviceCode,
         countryId,
@@ -2513,7 +2524,11 @@
         return;
       }
       const prices = Array.isArray(pricePlan?.prices)
-        ? pricePlan.prices.filter((price) => Number.isFinite(Number(price)))
+        ? (
+          pricePlan?.syntheticUserLimitProbe
+            ? []
+            : pricePlan.prices.filter((price) => Number.isFinite(Number(price)))
+        )
         : [];
       const userLimit = pricePlan?.userLimit === null || pricePlan?.userLimit === undefined
         ? ''
@@ -3877,7 +3892,7 @@
               ? rangeFilteredForRanking
               : (hasPriceBounds ? [] : orderedPrices);
             const numericPrices = Array.isArray(orderedPrices)
-              ? rankingPrices
+              ? (pricePlan?.syntheticUserLimitProbe ? [] : rankingPrices)
                   .map((value) => Number(value))
                   .filter((value) => Number.isFinite(value) && value > 0)
               : [];
@@ -3925,6 +3940,12 @@
           });
           const pricePlan = attempt.pricePlan || await resolvePhoneActivationPricePlan(config, countryConfig, state);
           let noNumbersObservedInCountry = false;
+          const useMaxPriceAsCeilingOnly = (
+            maxPriceLimit !== null
+            && minPriceLimit === null
+            && preferredPriceTier === null
+          );
+          const effectiveCountryPriceFloor = useMaxPriceAsCeilingOnly ? null : countryPriceFloor;
 
           const orderedPrices = reorderPriceCandidates(pricePlan.prices, acquirePriority, preferredPriceTier);
           const rangeFilteredPrices = filterPriceCandidatesWithinRange(
@@ -3935,11 +3956,11 @@
           const candidatePrices = rangeFilteredPrices.length
             ? rangeFilteredPrices
             : (hasPriceBounds ? [] : orderedPrices);
-          const floorFilteredPrices = filterPriceCandidatesAboveFloor(candidatePrices, countryPriceFloor);
+          const floorFilteredPrices = filterPriceCandidatesAboveFloor(candidatePrices, effectiveCountryPriceFloor);
           const hasCountryPriceFloor = (
-            countryPriceFloor !== null
-            && Number.isFinite(Number(countryPriceFloor))
-            && Number(countryPriceFloor) > 0
+            effectiveCountryPriceFloor !== null
+            && Number.isFinite(Number(effectiveCountryPriceFloor))
+            && Number(effectiveCountryPriceFloor) > 0
           );
           const hasAlternativeCountries = countryAttempts.some((entry) => (
             String(normalizeCountryId(entry?.countryConfig?.id, 0))
@@ -3948,30 +3969,38 @@
           // Same rule as 5sim/NexSMS: once floor is set, never re-try lower/equal tiers.
           // Keep a probe fallback only for HeroSMS (single-country/no-tier environments),
           // so replacement-limit behavior remains stable while still allowing country fallback.
-          const pricesToTry = hasCountryPriceFloor
-            ? (
-              floorFilteredPrices.length
-                ? floorFilteredPrices
-                : (hasAlternativeCountries ? [] : candidatePrices.slice(0, 1))
-            )
-            : (floorFilteredPrices.length ? floorFilteredPrices : candidatePrices);
-          const rawTierText = Array.isArray(pricePlan?.prices) && pricePlan.prices.length
+          const pricesToTry = useMaxPriceAsCeilingOnly
+            ? [maxPriceLimit]
+            : (
+              hasCountryPriceFloor
+                ? (
+                  floorFilteredPrices.length
+                    ? floorFilteredPrices
+                    : (hasAlternativeCountries ? [] : candidatePrices.slice(0, 1))
+                )
+                : (floorFilteredPrices.length ? floorFilteredPrices : candidatePrices)
+            );
+          const rawTierText = pricePlan?.syntheticUserLimitProbe
+            ? `无（按价格上限 ${pricePlan.userLimit} 探测）`
+            : Array.isArray(pricePlan?.prices) && pricePlan.prices.length
             ? pricePlan.prices
                 .map((value) => (value === null || value === undefined ? '自动' : String(value)))
                 .join(', ')
             : '无';
           await addLog(
-            `步骤 9：HeroSMS ${countryConfig.label} 价格方案：档位=[${rawTierText}]，用户上限=${pricePlan?.userLimit ?? '未设置'}，目录最低价=${pricePlan?.minCatalogPrice ?? '未知'}。`,
+            `步骤 9：HeroSMS ${countryConfig.label} 价格方案：${useMaxPriceAsCeilingOnly ? '可见档位' : '档位'}=[${rawTierText}]，购买上限=${pricePlan?.userLimit ?? '未设置'}，指定档位=${preferredPriceTier ?? '未设置'}，目录最低价=${pricePlan?.minCatalogPrice ?? '未知'}。`,
             'info'
           );
-          if (pricesToTry.length > 1 || countryPriceFloor !== null) {
+          if (useMaxPriceAsCeilingOnly || pricesToTry.length > 1 || hasCountryPriceFloor || pricePlan?.syntheticUserLimitProbe) {
             const tierText = pricesToTry
               .map((value) => (value === null || value === undefined ? '自动' : String(value)))
               .join(', ');
-            await addLog(
-              `步骤 9：HeroSMS ${countryConfig.label} 本轮候选价格：${tierText}${countryPriceFloor !== null ? `（高于 ${countryPriceFloor}）` : ''}。`,
-              'info'
-            );
+            const candidateLogText = useMaxPriceAsCeilingOnly
+              ? `步骤 9：HeroSMS ${countryConfig.label} 本轮不锁定档位，按购买上限 ${tierText} 请求。`
+              : (pricePlan?.syntheticUserLimitProbe
+                ? `步骤 9：HeroSMS ${countryConfig.label} 本轮按购买上限探测：${tierText}${hasCountryPriceFloor ? `（高于 ${effectiveCountryPriceFloor}）` : ''}。`
+                : `步骤 9：HeroSMS ${countryConfig.label} 本轮候选价格：${tierText}${hasCountryPriceFloor ? `（高于 ${effectiveCountryPriceFloor}）` : ''}。`);
+            await addLog(candidateLogText, 'info');
           }
           if (!pricesToTry.length) {
             if (priceRange.hasMinPriceLimit && !rangeFilteredPrices.length) {
@@ -3981,12 +4010,12 @@
               continue;
             }
             if (
-              countryPriceFloor !== null
+              hasCountryPriceFloor
               && Array.isArray(pricePlan.prices)
               && pricePlan.prices.length > 0
             ) {
               noNumbersByCountry.push(
-                `${countryConfig.label}: 当前回退尝试没有高于 ${countryPriceFloor} 的价格档位`
+                `${countryConfig.label}: 当前回退尝试没有高于 ${effectiveCountryPriceFloor} 的价格档位`
               );
               continue;
             }
@@ -4006,8 +4035,21 @@
             }
             continue;
           }
-          const purchaseReferencePrice = pricesToTry.find((price) => Number.isFinite(Number(price)) && Number(price) > 0) ?? null;
-          const purchaseMaxPrices = maxPriceLimit !== null ? [maxPriceLimit] : [null];
+          const purchaseReferencePrice = pricePlan?.syntheticUserLimitProbe || useMaxPriceAsCeilingOnly
+            ? null
+            : (pricesToTry.find((price) => Number.isFinite(Number(price)) && Number(price) > 0) ?? null);
+          const purchaseMaxPrices = (() => {
+            const explicitPrices = Array.from(new Set(
+              pricesToTry
+                .map((price) => Number(price))
+                .filter((price) => Number.isFinite(price) && price > 0)
+                .map((price) => Math.round(price * 10000) / 10000)
+            ));
+            if (explicitPrices.length) {
+              return explicitPrices;
+            }
+            return maxPriceLimit !== null ? [maxPriceLimit] : [null];
+          })();
           for (const maxPrice of purchaseMaxPrices) {
             for (const requestAction of requestActions) {
               try {
@@ -4034,7 +4076,9 @@
                 const activation = parseActivationPayload(payload, buildFallbackActivation(requestAction));
                 if (activation) {
                   const numericPrice = Number(purchaseReferencePrice ?? maxPrice);
-                  rememberActivationAcquiredPrice(activation, numericPrice);
+                  if (!pricePlan?.syntheticUserLimitProbe && !useMaxPriceAsCeilingOnly) {
+                    rememberActivationAcquiredPrice(activation, numericPrice);
+                  }
                   return {
                     ...activation,
                     countryId: countryConfig.id,
@@ -4071,10 +4115,14 @@
           }
 
           if (noNumbersObservedInCountry) {
-            const tiersTriedText = pricesToTry
-              .map((value) => (value === null || value === undefined ? '自动' : String(value)))
+            const tiersTriedText = pricePlan?.syntheticUserLimitProbe || useMaxPriceAsCeilingOnly
+              ? ''
+              : pricesToTry
+                .map((value) => (value === null || value === undefined ? '自动' : String(value)))
+                .join(', ');
+            const purchaseLimitText = purchaseMaxPrices
+              .map((price) => (price === null || price === undefined ? '自动' : String(price)))
               .join(', ');
-            const purchaseLimitText = maxPriceLimit === null ? '自动' : String(maxPriceLimit);
             if (
               pricePlan.userLimit !== null
               && pricePlan.minCatalogPrice !== null

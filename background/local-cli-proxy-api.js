@@ -5,6 +5,8 @@
   const TOKEN_URL = 'https://auth.openai.com/oauth/token';
   const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
   const REDIRECT_URI = 'http://localhost:1455/auth/callback';
+  const CODEX_OAUTH_SCOPE = 'openid profile email offline_access api.connectors.read api.connectors.invoke';
+  const CODEX_ORIGINATOR = 'codex_cli_rs';
   const DEFAULT_RELATIVE_AUTH_DIR = '.cli-proxy-api';
 
   function normalizeString(value = '') {
@@ -74,14 +76,14 @@
 
   async function generateRandomState(options = {}) {
     const cryptoLike = getCryptoLike(options.crypto);
-    const bytes = new Uint8Array(16);
+    const bytes = new Uint8Array(32);
     cryptoLike.getRandomValues(bytes);
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    return bytesToBase64Url(bytes);
   }
 
   async function generatePkceCodes(options = {}) {
     const cryptoLike = getCryptoLike(options.crypto);
-    const bytes = new Uint8Array(96);
+    const bytes = new Uint8Array(64);
     cryptoLike.getRandomValues(bytes);
     const codeVerifier = bytesToBase64Url(bytes);
     const codeChallenge = bytesToBase64Url(await sha256Bytes(codeVerifier, cryptoLike));
@@ -146,6 +148,8 @@
     codeChallenge,
     clientId = CLIENT_ID,
     redirectUri = REDIRECT_URI,
+    prompt = '',
+    allowedWorkspaceIds = null,
   } = {}) {
     const normalizedState = normalizeString(state);
     const normalizedChallenge = normalizeString(codeChallenge);
@@ -160,13 +164,23 @@
     params.set('client_id', normalizeString(clientId) || CLIENT_ID);
     params.set('response_type', 'code');
     params.set('redirect_uri', normalizeString(redirectUri) || REDIRECT_URI);
-    params.set('scope', 'openid email profile offline_access');
+    params.set('scope', CODEX_OAUTH_SCOPE);
     params.set('state', normalizedState);
     params.set('code_challenge', normalizedChallenge);
     params.set('code_challenge_method', 'S256');
-    params.set('prompt', 'login');
+    const normalizedPrompt = normalizeString(prompt);
+    if (normalizedPrompt) {
+      params.set('prompt', normalizedPrompt);
+    }
     params.set('id_token_add_organizations', 'true');
     params.set('codex_cli_simplified_flow', 'true');
+    params.set('originator', CODEX_ORIGINATOR);
+    const workspaceIds = Array.isArray(allowedWorkspaceIds)
+      ? allowedWorkspaceIds.map(normalizeString).filter(Boolean)
+      : [];
+    if (workspaceIds.length) {
+      params.set('allowed_workspace_id', workspaceIds.join(','));
+    }
     return `${AUTH_URL}?${params.toString()}`;
   }
 
@@ -272,6 +286,8 @@
           codeChallenge: pkceCodes.codeChallenge,
           clientId: options.clientId || CLIENT_ID,
           redirectUri: options.redirectUri || REDIRECT_URI,
+          prompt: options.prompt === undefined ? '' : options.prompt,
+          allowedWorkspaceIds: options.allowedWorkspaceIds,
         }),
       };
     }
@@ -436,6 +452,8 @@
       TOKEN_URL,
       CLIENT_ID,
       REDIRECT_URI,
+      CODEX_OAUTH_SCOPE,
+      CODEX_ORIGINATOR,
       DEFAULT_RELATIVE_AUTH_DIR,
       buildAuthJsonArtifact,
       createAuthorizationRequest,
@@ -451,6 +469,8 @@
     TOKEN_URL,
     CLIENT_ID,
     REDIRECT_URI,
+    CODEX_OAUTH_SCOPE,
+    CODEX_ORIGINATOR,
     DEFAULT_RELATIVE_AUTH_DIR,
     buildAuthUrl,
     buildCredentialFileName,

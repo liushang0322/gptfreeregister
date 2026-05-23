@@ -2074,8 +2074,11 @@ async function ensureSignupPhoneCountrySelected(phoneInput, options = {}) {
 }
 
 function toNationalPhoneNumber(value, dialCode) {
-  const digits = normalizePhoneDigits(value);
   const normalizedDialCode = normalizePhoneDigits(dialCode);
+  let digits = normalizePhoneDigits(value);
+  if (normalizedDialCode && digits.startsWith(`0${normalizedDialCode}`) && digits.length > normalizedDialCode.length + 1) {
+    digits = digits.slice(1);
+  }
   const isExplicitInternational = /^\s*(?:\+|00)\s*\d/.test(String(value || '').trim());
   if (!digits) {
     return '';
@@ -2090,8 +2093,11 @@ function toNationalPhoneNumber(value, dialCode) {
 }
 
 function toE164PhoneNumber(value, dialCode) {
-  const digits = normalizePhoneDigits(value);
   const normalizedDialCode = normalizePhoneDigits(dialCode);
+  let digits = normalizePhoneDigits(value);
+  if (normalizedDialCode && digits.startsWith(`0${normalizedDialCode}`) && digits.length > normalizedDialCode.length + 1) {
+    digits = digits.slice(1);
+  }
   const isExplicitInternational = /^\s*(?:\+|00)\s*\d/.test(String(value || '').trim());
   if (!digits) {
     return '';

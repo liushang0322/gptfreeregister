@@ -327,7 +327,7 @@
       const candidate = new URL(candidateUrl);
       return callback.origin === candidate.origin
         && callback.pathname === candidate.pathname
-        && callback.searchParams.get('code') === candidate.searchParams.get('code')
+        && (callback.searchParams.get('code') || callback.searchParams.get('error')) === (candidate.searchParams.get('code') || candidate.searchParams.get('error'))
         && callback.searchParams.get('state') === candidate.searchParams.get('state');
     }
 
