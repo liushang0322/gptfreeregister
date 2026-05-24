@@ -120,6 +120,41 @@
       return Math.max(0, Number(summary?.attempts || 0) - 1);
     }
 
+    function normalizeSuccessfulReusablePhoneActivation(value) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null;
+      }
+      const activationId = String(value.activationId ?? value.id ?? value.activation ?? '').trim();
+      const phoneNumber = String(value.phoneNumber ?? value.number ?? value.phone ?? '').trim();
+      if (!activationId || !phoneNumber) {
+        return null;
+      }
+      const successfulUses = Math.max(0, Math.floor(Number(value.successfulUses) || 0));
+      const maxUses = Math.max(1, Math.floor(Number(value.maxUses) || 1));
+      if (successfulUses <= 0 || successfulUses >= maxUses) {
+        return null;
+      }
+      return {
+        ...value,
+        activationId,
+        phoneNumber,
+        successfulUses,
+        maxUses,
+      };
+    }
+
+    function normalizeOptionalPositivePrice(value = '') {
+      const rawValue = String(value ?? '').trim();
+      if (!rawValue) {
+        return '';
+      }
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return '';
+      }
+      return String(Math.round(numeric * 10000) / 10000);
+    }
+
     function normalizeRecordNode(value = '') {
       return String(value || '').trim();
     }
@@ -258,6 +293,19 @@
 
     function shouldContinueNextRoundAfterPhoneFailure(totalRuns, targetRun) {
       return Number(totalRuns) > 1 && Number(targetRun) < Number(totalRuns);
+    }
+
+    function isSignupEntryBlockedFailure(errorLike) {
+      const code = String(errorLike?.code || '').trim().toUpperCase();
+      if (code === 'SIGNUP_ENTRY_LOGGED_IN_SESSION') {
+        return true;
+      }
+      const message = String(
+        typeof getErrorMessage === 'function'
+          ? getErrorMessage(errorLike)
+          : (errorLike?.message || errorLike || '')
+      ).trim();
+      return /步骤\s*2[：:].*检测到当前停留在已登录\s*ChatGPT\s*首页.*已阻止自动跳过步骤\s*3\/4\/5|当前页面没有可用的注册入口，也不在邮箱\/密码页/i.test(message);
     }
 
     async function logAutoRunFinalSummary(totalRuns, roundSummaries = []) {
@@ -578,7 +626,60 @@
               inbucketMailbox: prevState.inbucketMailbox,
               cloudflareDomain: prevState.cloudflareDomain,
               cloudflareDomains: prevState.cloudflareDomains,
-              reusablePhoneActivation: prevState.reusablePhoneActivation,
+              phoneVerificationEnabled: prevState.phoneVerificationEnabled,
+              phoneSmsProvider: prevState.phoneSmsProvider,
+              phoneSmsProviderOrder: Array.isArray(prevState.phoneSmsProviderOrder)
+                ? [...prevState.phoneSmsProviderOrder]
+                : prevState.phoneSmsProviderOrder,
+              heroSmsApiKey: prevState.heroSmsApiKey,
+              heroSmsMinPrice: normalizeOptionalPositivePrice(prevState.heroSmsMinPrice),
+              heroSmsMaxPrice: normalizeOptionalPositivePrice(prevState.heroSmsMaxPrice),
+              heroSmsPreferredPrice: normalizeOptionalPositivePrice(prevState.heroSmsPreferredPrice),
+              heroSmsCountryId: prevState.heroSmsCountryId,
+              heroSmsCountryLabel: prevState.heroSmsCountryLabel,
+              heroSmsCountryFallback: Array.isArray(prevState.heroSmsCountryFallback)
+                ? [...prevState.heroSmsCountryFallback]
+                : prevState.heroSmsCountryFallback,
+              heroSmsAcquirePriority: prevState.heroSmsAcquirePriority,
+              heroSmsActivationRetryRounds: prevState.heroSmsActivationRetryRounds,
+              heroSmsActivationRetryDelayMs: prevState.heroSmsActivationRetryDelayMs,
+              phoneSmsReuseEnabled: prevState.phoneSmsReuseEnabled,
+              heroSmsReuseEnabled: prevState.heroSmsReuseEnabled,
+              fiveSimApiKey: prevState.fiveSimApiKey,
+              fiveSimMinPrice: normalizeOptionalPositivePrice(prevState.fiveSimMinPrice),
+              fiveSimMaxPrice: normalizeOptionalPositivePrice(prevState.fiveSimMaxPrice),
+              fiveSimCountryId: prevState.fiveSimCountryId,
+              fiveSimCountryLabel: prevState.fiveSimCountryLabel,
+              fiveSimCountryFallback: Array.isArray(prevState.fiveSimCountryFallback)
+                ? [...prevState.fiveSimCountryFallback]
+                : prevState.fiveSimCountryFallback,
+              fiveSimCountryOrder: Array.isArray(prevState.fiveSimCountryOrder)
+                ? [...prevState.fiveSimCountryOrder]
+                : prevState.fiveSimCountryOrder,
+              fiveSimProduct: prevState.fiveSimProduct,
+              fiveSimOperator: prevState.fiveSimOperator,
+              nexSmsApiKey: prevState.nexSmsApiKey,
+              nexSmsCountryOrder: Array.isArray(prevState.nexSmsCountryOrder)
+                ? [...prevState.nexSmsCountryOrder]
+                : prevState.nexSmsCountryOrder,
+              nexSmsServiceCode: prevState.nexSmsServiceCode,
+              nexSmsNumberType: prevState.nexSmsNumberType,
+              nexSmsPremiumAppQuery: prevState.nexSmsPremiumAppQuery,
+              nexSmsPremiumCateId: prevState.nexSmsPremiumCateId,
+              nexSmsPremiumCardType: prevState.nexSmsPremiumCardType,
+              nexSmsPremiumExpiry: prevState.nexSmsPremiumExpiry,
+              nexSmsPremiumPrefix: prevState.nexSmsPremiumPrefix,
+              phoneVerificationReplacementLimit: prevState.phoneVerificationReplacementLimit,
+              phoneCodeWaitSeconds: prevState.phoneCodeWaitSeconds,
+              phoneCodeTimeoutWindows: prevState.phoneCodeTimeoutWindows,
+              phoneCodePollIntervalSeconds: prevState.phoneCodePollIntervalSeconds,
+              phoneCodePollMaxRounds: prevState.phoneCodePollMaxRounds,
+              reusablePhoneActivation: normalizeSuccessfulReusablePhoneActivation(prevState.reusablePhoneActivation),
+              phoneReusableActivationPool: Array.isArray(prevState.phoneReusableActivationPool)
+                ? prevState.phoneReusableActivationPool
+                  .map((entry) => normalizeSuccessfulReusablePhoneActivation(entry))
+                  .filter(Boolean)
+                : [],
               autoRunRoundSummaries: serializeAutoRunRoundSummaries(totalRuns, roundSummaries),
               autoRunSessionId: sessionId,
               tabRegistry: {},
@@ -687,11 +788,13 @@
               && isSignupUserAlreadyExistsFailure(err);
             const blockedByStep4Route405 = typeof isStep4Route405RecoveryLimitFailure === 'function'
               && isStep4Route405RecoveryLimitFailure(err);
+            const blockedBySignupEntry = isSignupEntryBlockedFailure(err);
             const canRetry = !blockedByAddPhone
               && !blockedByPhoneNoSupply
               && !blockedByPlusNonFreeTrial
               && !blockedByGpcTaskEnded
               && !blockedBySignupUserAlreadyExists
+              && !blockedBySignupEntry
               && autoRunSkipFailures
               && attemptRun < maxAttemptsForRound;
 
@@ -913,6 +1016,25 @@
                 targetRun < totalRuns
                   ? `第 ${targetRun}/${totalRuns} 轮因步骤 4 连续 405 提前结束，自动流程将继续下一轮。`
                   : `第 ${targetRun}/${totalRuns} 轮因步骤 4 连续 405 提前结束，已无后续轮次，本次自动运行结束。`,
+                'warn'
+              );
+              forceFreshTabsNextRun = true;
+              break;
+            }
+
+            if (blockedBySignupEntry) {
+              roundSummary.status = 'failed';
+              roundSummary.finalFailureReason = reason;
+              await setState({
+                autoRunRoundSummaries: serializeAutoRunRoundSummaries(totalRuns, roundSummaries),
+              });
+              await appendRoundRecordIfNeeded('failed', reason, err);
+              cancelPendingCommands('当前轮因注册入口状态异常已终止。');
+              await broadcastStopToContentScripts();
+              await addLog(
+                targetRun < totalRuns
+                  ? `第 ${targetRun}/${totalRuns} 轮注册入口状态异常，本轮记为失败并继续下一轮。`
+                  : `第 ${targetRun}/${totalRuns} 轮注册入口状态异常，已无后续轮次，本次自动运行结束。`,
                 'warn'
               );
               forceFreshTabsNextRun = true;

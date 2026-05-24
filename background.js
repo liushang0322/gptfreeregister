@@ -580,16 +580,18 @@ const PHONE_REPLACEMENT_LIMIT_MAX = 20;
 const DEFAULT_PHONE_VERIFICATION_REPLACEMENT_LIMIT = 3;
 const PHONE_CODE_WAIT_SECONDS_MIN = 15;
 const PHONE_CODE_WAIT_SECONDS_MAX = 300;
-const DEFAULT_PHONE_CODE_WAIT_SECONDS = 60;
+const LEGACY_DEFAULT_PHONE_CODE_WAIT_SECONDS = 60;
+const DEFAULT_PHONE_CODE_WAIT_SECONDS = 120;
 const PHONE_CODE_TIMEOUT_WINDOWS_MIN = 1;
 const PHONE_CODE_TIMEOUT_WINDOWS_MAX = 10;
-const DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2;
+const LEGACY_DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2;
+const DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 3;
 const PHONE_CODE_POLL_INTERVAL_SECONDS_MIN = 1;
 const PHONE_CODE_POLL_INTERVAL_SECONDS_MAX = 30;
 const DEFAULT_PHONE_CODE_POLL_INTERVAL_SECONDS = 5;
 const PHONE_CODE_POLL_ROUNDS_MIN = 1;
 const PHONE_CODE_POLL_ROUNDS_MAX = 120;
-const DEFAULT_PHONE_CODE_POLL_ROUNDS = 4;
+const DEFAULT_PHONE_CODE_POLL_ROUNDS = 24;
 const LEGACY_AUTO_STEP_DELAY_KEYS = ['autoStepRandomDelayMinSeconds', 'autoStepRandomDelayMaxSeconds'];
 const LEGACY_VERIFICATION_RESEND_COUNT_KEYS = ['signupVerificationResendCount', 'loginVerificationResendCount'];
 const DEFAULT_LOCAL_CPA_STEP9_MODE = 'submit';
@@ -606,6 +608,7 @@ const DEFAULT_HOTMAIL_LOCAL_BASE_URL = 'http://127.0.0.1:17373';
 const DEFAULT_ACCOUNT_RUN_HISTORY_HELPER_BASE_URL = DEFAULT_HOTMAIL_LOCAL_BASE_URL;
 const DEFAULT_LOCAL_CPA_JSON_RELATIVE_AUTH_DIR = '.cli-proxy-api';
 const HOTMAIL_LOCAL_HELPER_TIMEOUT_MS = 45000;
+const HOTMAIL_ACCOUNT_VERIFY_TIMEOUT_MS = 60000;
 const DEFAULT_LUCKMAIL_PROJECT_CODE = 'openai';
 const DEFAULT_HERO_SMS_BASE_URL = 'https://hero-sms.com/stubs/handler_api.php';
 const HERO_SMS_SERVICE_CODE = 'dr';
@@ -3532,6 +3535,20 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
       normalizedInput.verificationResendCount = legacyVerificationResendCount;
     }
   }
+  if (
+    fillDefaults
+    && Number(normalizedInput.phoneCodeWaitSeconds) === LEGACY_DEFAULT_PHONE_CODE_WAIT_SECONDS
+    && Number(normalizedInput.phoneCodeTimeoutWindows) === LEGACY_DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS
+  ) {
+    normalizedInput.phoneCodeWaitSeconds = DEFAULT_PHONE_CODE_WAIT_SECONDS;
+    normalizedInput.phoneCodeTimeoutWindows = DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS;
+    if (
+      normalizedInput.phoneCodePollMaxRounds === undefined
+      || Number(normalizedInput.phoneCodePollMaxRounds) === 4
+    ) {
+      normalizedInput.phoneCodePollMaxRounds = DEFAULT_PHONE_CODE_POLL_ROUNDS;
+    }
+  }
 
   const payload = {};
   let matchedKeyCount = 0;
@@ -4336,13 +4353,14 @@ async function resetState() {
       ?? prev.reusablePhoneActivation.phone
       ?? ''
     ).trim()
+    && isSuccessfulReusablePhoneActivation(prev.reusablePhoneActivation)
   )
     ? prev.reusablePhoneActivation
     : null;
   const phoneReusableActivationPool = Array.isArray(prev.phoneReusableActivationPool)
     ? prev.phoneReusableActivationPool
       .map((entry) => normalizePhonePreferredActivation(entry))
-      .filter(Boolean)
+      .filter((entry) => isSuccessfulReusablePhoneActivation(entry))
     : [];
   const freeReusablePhoneActivation = (
     prev.freeReusablePhoneActivation
@@ -5147,6 +5165,42 @@ function buildHotmailLocalEndpoint(baseUrl, path) {
   return new URL(path, `${normalizedBaseUrl}/`).toString();
 }
 
+async function readFetchResponseTextWithTimeout(response, timeoutMs, label = '请求') {
+  const bodyPromise = response.text();
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label}读取响应超时（>${Math.round(timeoutMs / 1000)} 秒）`));
+    }, Math.max(1000, Number(timeoutMs) || 1000));
+  });
+  try {
+    return await Promise.race([bodyPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    void bodyPromise.catch(() => {});
+  }
+}
+
+async function runHotmailAccountVerificationWithTimeout(account, timeoutMs = HOTMAIL_ACCOUNT_VERIFY_TIMEOUT_MS) {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Hotmail 账号 ${account?.email || account?.id || ''} 校验超时（>${Math.round(timeoutMs / 1000)} 秒）`));
+    }, Math.max(1000, Number(timeoutMs) || HOTMAIL_ACCOUNT_VERIFY_TIMEOUT_MS));
+  });
+  const verificationPromise = fetchHotmailMailboxMessages(account, ['INBOX']);
+  try {
+    return await Promise.race([verificationPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    void verificationPromise.catch(() => {});
+  }
+}
+
 async function requestHotmailRemoteMailbox(account, mailbox = 'INBOX') {
   if (!account?.email) {
     throw new Error('Hotmail 账号缺少邮箱地址。');
@@ -5287,7 +5341,7 @@ async function requestHotmailLocalMessages(account, mailboxes = HOTMAIL_MAILBOXE
     clearTimeout(timeoutId);
   }
 
-  const text = await response.text();
+  const text = await readFetchResponseTextWithTimeout(response, requestTimeoutMs, 'Hotmail 本地助手');
   let payload = {};
   try {
     payload = text ? JSON.parse(text) : {};
@@ -5359,7 +5413,7 @@ async function requestHotmailLocalCode(account, pollPayload = {}) {
         clientId: account.clientId,
         refreshToken: account.refreshToken,
         mailboxes: HOTMAIL_MAILBOXES,
-        top: 5,
+        top: Math.max(10, Math.min(Number(pollPayload.top) || 10, 30)),
         senderFilters: pollPayload.senderFilters || [],
         subjectFilters: pollPayload.subjectFilters || [],
         requiredKeywords: pollPayload.requiredKeywords || [],
@@ -5378,7 +5432,7 @@ async function requestHotmailLocalCode(account, pollPayload = {}) {
     clearTimeout(timeoutId);
   }
 
-  const text = await response.text();
+  const text = await readFetchResponseTextWithTimeout(response, requestTimeoutMs, 'Hotmail 本地助手');
   let payload = {};
   try {
     payload = text ? JSON.parse(text) : {};
@@ -5402,13 +5456,39 @@ async function requestHotmailLocalCode(account, pollPayload = {}) {
     nextRefreshToken: String(payload?.nextRefreshToken || '').trim(),
   });
   const savedAccount = await upsertHotmailAccount(nextAccount);
+  const rawMessages = Array.isArray(payload?.messages) ? payload.messages : [];
+  const normalizedMessages = normalizeHotmailMailApiMessages(rawMessages).map((message, index) => ({
+    ...message,
+    mailbox: rawMessages[index]?.mailbox || 'INBOX',
+    receivedTimestamp: Number(rawMessages[index]?.receivedTimestamp || 0) || 0,
+  }));
+  const mailboxResults = Array.isArray(payload?.mailboxResults)
+    ? payload.mailboxResults.map((item) => ({
+      mailbox: String(item?.mailbox || 'INBOX'),
+      count: Number(item?.count || 0),
+      messages: normalizedMessages.filter((message) => String(message.mailbox || 'INBOX') === String(item?.mailbox || 'INBOX')),
+    }))
+    : [];
   return {
     account: savedAccount,
     code: String(payload?.code || ''),
     message: normalizedMessage,
+    messages: normalizedMessages,
+    mailboxResults,
     usedTimeFallback: Boolean(payload?.usedTimeFallback),
+    usedRelaxedKeywords: Boolean(payload?.usedRelaxedKeywords),
     selectionSource: String(payload?.selectionSource || ''),
+    transport: String(payload?.transport || ''),
   };
+}
+
+function isSuccessfulReusablePhoneActivation(value) {
+  const activation = normalizePhonePreferredActivation(value);
+  return Boolean(
+    activation
+    && Math.max(0, Math.floor(Number(activation.successfulUses) || 0)) > 0
+    && Math.max(1, Math.floor(Number(activation.maxUses) || 1)) > Math.max(0, Math.floor(Number(activation.successfulUses) || 0))
+  );
 }
 
 async function pollHotmailVerificationCodeViaLocalHelper(step, account, pollPayload = {}) {
@@ -5416,6 +5496,32 @@ async function pollHotmailVerificationCodeViaLocalHelper(step, account, pollPayl
   const intervalMs = Number(pollPayload.intervalMs) || 3000;
   let workingAccount = account;
   let lastError = null;
+
+  function summarizeMessagesForLog(messages) {
+    return (messages || [])
+      .slice()
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.receivedDateTime || '') || Number(left.receivedTimestamp || 0) || 0;
+        const rightTime = Date.parse(right.receivedDateTime || '') || Number(right.receivedTimestamp || 0) || 0;
+        return rightTime - leftTime;
+      })
+      .slice(0, 3)
+      .map((message) => {
+        const receivedAt = message?.receivedDateTime || '未知时间';
+        const sender = message?.from?.emailAddress?.address || '未知发件人';
+        const subject = message?.subject || '（无主题）';
+        const preview = String(message?.bodyPreview || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+        return `[${message.mailbox || 'INBOX'}] ${receivedAt} | ${sender} | ${subject} | ${preview}`;
+      })
+      .join(' || ');
+  }
+
+  function summarizeMailboxCounts(mailboxResults) {
+    return (mailboxResults || [])
+      .map((item) => `${item.mailbox || 'INBOX'}=${Number(item.count || 0)}`)
+      .filter(Boolean)
+      .join(', ');
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     throwIfStopped();
@@ -5429,6 +5535,9 @@ async function pollHotmailVerificationCodeViaLocalHelper(step, account, pollPayl
         if (fetchResult.usedTimeFallback) {
           await addLog(`步骤 ${step}：本地助手使用时间回退后命中 Hotmail ${mailboxLabel} 验证码。`, 'warn');
         }
+        if (fetchResult.usedRelaxedKeywords) {
+          await addLog(`步骤 ${step}：本地助手放宽关键词后命中 Hotmail ${mailboxLabel} 验证码。`, 'warn');
+        }
         await addLog(`步骤 ${step}：已通过本地助手在 Hotmail ${mailboxLabel} 中找到验证码：${fetchResult.code}`, 'ok');
         return {
           ok: true,
@@ -5440,6 +5549,14 @@ async function pollHotmailVerificationCodeViaLocalHelper(step, account, pollPayl
 
       lastError = new Error(`步骤 ${step}：本地助手暂未返回匹配验证码（${attempt}/${maxAttempts}）。`);
       await addLog(lastError.message, attempt === maxAttempts ? 'warn' : 'info');
+      const mailboxCounts = summarizeMailboxCounts(fetchResult.mailboxResults);
+      if (mailboxCounts || fetchResult.transport) {
+        await addLog(`步骤 ${step}：本地助手 Hotmail 查询结果：${fetchResult.transport ? `transport=${fetchResult.transport}` : ''}${mailboxCounts ? `，邮箱计数 ${mailboxCounts}` : ''}。`, 'info');
+      }
+      const mailSummary = summarizeMessagesForLog(fetchResult.messages);
+      if (mailSummary) {
+        await addLog(`步骤 ${step}：本地助手最近邮件样本：${mailSummary}`, 'info');
+      }
     } catch (err) {
       lastError = err;
       await addLog(`步骤 ${step}：本地助手轮询 Hotmail 失败：${err.message}`, 'warn');
@@ -5468,7 +5585,7 @@ async function verifyHotmailAccount(accountId) {
     throw new Error('未找到需要校验的 Hotmail 账号。');
   }
 
-  const result = await fetchHotmailMailboxMessages(account, ['INBOX']);
+  const result = await runHotmailAccountVerificationWithTimeout(account);
   return {
     account: result.account,
     messageCount: result.mailboxResults[0]?.count || 0,
@@ -13556,6 +13673,7 @@ const step6Executor = self.MultiPageBackgroundStep6?.createStep6Executor({
   getTabId,
   isLocalhostOAuthCallbackUrl,
   isTabAlive,
+  markCurrentRegistrationAccountUsed,
   normalizeHotmailLocalBaseUrl,
   normalizeSub2ApiUrl,
   registerTab,
@@ -13723,8 +13841,10 @@ const sub2ApiSessionImportExecutor = self.MultiPageBackgroundSub2ApiSessionImpor
   chrome,
   completeNodeFromBackground,
   ensureContentScriptReadyOnTabUntilStopped,
+  getState,
   getTabId,
   isTabAlive,
+  markCurrentRegistrationAccountUsed,
   normalizeSub2ApiUrl,
   registerTab,
   sendTabMessageUntilStopped,
@@ -13765,6 +13885,7 @@ const step10Executor = self.MultiPageBackgroundStep10?.createStep10Executor({
   getTabId,
   isLocalhostOAuthCallbackUrl,
   isTabAlive,
+  markCurrentRegistrationAccountUsed,
   normalizeHotmailLocalBaseUrl,
   normalizeCodex2ApiUrl,
   normalizeSub2ApiUrl,

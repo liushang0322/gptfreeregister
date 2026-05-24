@@ -499,10 +499,23 @@ def decode_mime_header(value):
     parts = []
     for chunk, charset in decode_header(value):
         if isinstance(chunk, bytes):
-            parts.append(chunk.decode(charset or "utf-8", errors="ignore"))
+            parts.append(decode_text_bytes(chunk, charset))
         else:
             parts.append(str(chunk))
     return "".join(parts).strip()
+
+
+def decode_text_bytes(payload, charset=None):
+    raw = payload or b""
+    candidates = [str(charset or "").strip(), "utf-8", "latin-1"]
+    for candidate in candidates:
+        if not candidate or candidate.lower() in {"unknown", "unknown-8bit", "x-unknown"}:
+            continue
+        try:
+            return raw.decode(candidate, errors="ignore")
+        except LookupError:
+            continue
+    return raw.decode("utf-8", errors="ignore")
 
 
 def extract_text_part(message):
@@ -514,7 +527,7 @@ def extract_text_part(message):
                 continue
             payload = part.get_payload(decode=True) or b""
             charset = part.get_content_charset() or "utf-8"
-            text = payload.decode(charset, errors="ignore").strip()
+            text = decode_text_bytes(payload, charset).strip()
             if part.get_content_type() == "text/plain" and text:
                 return text
             if part.get_content_type() == "text/html" and text:
@@ -523,7 +536,7 @@ def extract_text_part(message):
 
     payload = message.get_payload(decode=True) or b""
     charset = message.get_content_charset() or "utf-8"
-    text = payload.decode(charset, errors="ignore").strip()
+    text = decode_text_bytes(payload, charset).strip()
     if message.get_content_type() == "text/html":
         return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(text))).strip()
     return text
@@ -855,7 +868,7 @@ def select_latest_code(messages, sender_filters, subject_filters, exclude_codes,
     required_keyword_hints = [str(item).strip().lower() for item in required_keywords or [] if str(item).strip()]
     excluded = {str(item).strip() for item in exclude_codes or [] if str(item).strip()}
 
-    def match_message(message, apply_time_filter):
+    def match_message(message, apply_time_filter, use_required_keywords=True):
         timestamp = int(message.get("receivedTimestamp") or 0)
         if apply_time_filter and filter_after_timestamp and timestamp and timestamp < int(filter_after_timestamp):
             return None
@@ -863,7 +876,7 @@ def select_latest_code(messages, sender_filters, subject_filters, exclude_codes,
         sender = str(message.get("from", {}).get("emailAddress", {}).get("address", "")).lower()
         subject = str(message.get("subject", ""))
         preview = str(message.get("bodyPreview", ""))
-        combined = " ".join([sender, subject.lower(), preview.lower()])
+        body_content = ""
         code = extract_code(" ".join([subject, preview, sender]), code_patterns=code_patterns)
         if not code:
             body_content = get_message_body_content(message)
@@ -872,18 +885,29 @@ def select_latest_code(messages, sender_filters, subject_filters, exclude_codes,
         if not code or code in excluded:
             return None
 
+        combined = " ".join([sender, subject.lower(), preview.lower(), str(body_content or "").lower()])
+        active_required_keywords = required_keyword_hints if use_required_keywords else []
         sender_ok = bool(sender_keywords) and any(keyword in combined for keyword in sender_keywords)
         subject_ok = bool(subject_keywords) and any(keyword in combined for keyword in subject_keywords)
-        keyword_ok = bool(required_keyword_hints) and any(keyword in combined for keyword in required_keyword_hints)
-        if (sender_keywords or subject_keywords or required_keyword_hints) and not sender_ok and not subject_ok and not keyword_ok:
+        keyword_ok = bool(active_required_keywords) and any(keyword in combined for keyword in active_required_keywords)
+        if (sender_keywords or subject_keywords or active_required_keywords) and not sender_ok and not subject_ok and not keyword_ok:
             return None
 
         return {"code": code, "message": message}
 
-    for use_time_fallback in [False, True]:
+    fallback_plan = [
+        (False, True),
+        (True, True),
+        (True, False),
+    ]
+    for use_time_fallback, use_required_keywords in fallback_plan:
         matched = []
         for message in messages:
-            result = match_message(message, apply_time_filter=not use_time_fallback)
+            result = match_message(
+                message,
+                apply_time_filter=not use_time_fallback,
+                use_required_keywords=use_required_keywords,
+            )
             if result:
                 matched.append(result)
         if matched:
@@ -893,8 +917,9 @@ def select_latest_code(messages, sender_filters, subject_filters, exclude_codes,
                 "code": best["code"],
                 "message": best["message"],
                 "usedTimeFallback": use_time_fallback,
+                "usedRelaxedKeywords": not use_required_keywords,
             }
-    return {"code": "", "message": None, "usedTimeFallback": False}
+    return {"code": "", "message": None, "usedTimeFallback": False, "usedRelaxedKeywords": False}
 
 
 class HotmailHelperHandler(BaseHTTPRequestHandler):
@@ -992,6 +1017,9 @@ class HotmailHelperHandler(BaseHTTPRequestHandler):
                     "code": selected["code"],
                     "message": selected["message"],
                     "usedTimeFallback": selected["usedTimeFallback"],
+                    "usedRelaxedKeywords": selected.get("usedRelaxedKeywords", False),
+                    "messages": result["messages"],
+                    "mailboxResults": result["mailboxResults"],
                     "nextRefreshToken": result["token_payload"].get("next_refresh_token") or "",
                     "tokenEndpoint": result["token_payload"].get("token_endpoint") or "",
                     "transport": result.get("transport") or "",

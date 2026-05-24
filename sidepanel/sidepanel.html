@@ -1717,7 +1717,7 @@
                   <div class="hero-sms-price-control hero-sms-price-control-reuse">
                     <span class="hero-sms-settings-caption">号码复用</span>
                     <div class="setting-controls hero-sms-toggle-controls">
-                      <label class="toggle-switch hero-sms-price-reuse-toggle" for="input-hero-sms-reuse-enabled" title="开启后会优先复用未超次数的可用号码">
+                      <label class="toggle-switch hero-sms-price-reuse-toggle" for="input-hero-sms-reuse-enabled" title="开启后会优先复用未超次数的可用号码；支持 HeroSMS、5sim、NexSMS">
                         <input type="checkbox" id="input-hero-sms-reuse-enabled" />
                         <span class="toggle-switch-track" aria-hidden="true">
                           <span class="toggle-switch-thumb"></span>
@@ -1749,14 +1749,14 @@
                 <div id="row-phone-code-wait-seconds" class="hero-sms-settings-cell" style="display:none;">
                   <span class="hero-sms-settings-caption">验证码限时</span>
                   <div class="setting-controls">
-                    <input type="number" id="input-phone-code-wait-seconds" class="data-input auto-delay-input" value="60" min="15" max="300" step="1" title="每轮等待验证码的秒数" />
+                    <input type="number" id="input-phone-code-wait-seconds" class="data-input auto-delay-input" value="120" min="15" max="300" step="1" title="每轮等待验证码的秒数；默认 120 秒，避免短信延迟导致过早换号" />
                     <span class="data-unit">秒</span>
                   </div>
                 </div>
                 <div id="row-phone-code-timeout-windows" class="hero-sms-settings-cell" style="display:none;">
                   <span class="hero-sms-settings-caption">超时次数</span>
                   <div class="setting-controls">
-                    <input type="number" id="input-phone-code-timeout-windows" class="data-input auto-delay-input" value="2" min="1" max="10" step="1" title="验证码超时后，最多继续等待几轮再换号" />
+                    <input type="number" id="input-phone-code-timeout-windows" class="data-input auto-delay-input" value="3" min="1" max="10" step="1" title="验证码超时后，最多继续等待几轮再换号；默认总等待约 6 分钟" />
                     <span class="data-unit">轮</span>
                   </div>
                 </div>
@@ -1770,7 +1770,7 @@
                 <div id="row-phone-code-poll-max-rounds" class="hero-sms-settings-cell" style="display:none;">
                   <span class="hero-sms-settings-caption">轮询次数</span>
                   <div class="setting-controls">
-                    <input type="number" id="input-phone-code-poll-max-rounds" class="data-input auto-delay-input" value="4" min="1" max="120" step="1" title="每个验证码等待窗口的基础轮询次数；如果低于等待时长和轮询间隔所需次数，会自动补足，避免提前结束" />
+                    <input type="number" id="input-phone-code-poll-max-rounds" class="data-input auto-delay-input" value="24" min="1" max="120" step="1" title="每个验证码等待窗口的基础轮询次数；如果低于等待时长和轮询间隔所需次数，会自动补足，避免提前结束" />
                     <span class="data-unit">次</span>
                   </div>
                 </div>

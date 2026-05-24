@@ -580,6 +580,15 @@
       return normalized === 'gopay' ? 'gopay' : 'paypal';
     }
 
+    function isSub2ApiDeliveryState(state = {}) {
+      const panelMode = String(state?.panelMode || '').trim().toLowerCase();
+      if (panelMode === 'sub2api') {
+        return true;
+      }
+      return getNodeIdsForState(state).includes('platform-verify')
+        && getNodeDefinitionForState('platform-verify', state)?.sourceId === 'sub2api-panel';
+    }
+
     function getPlusPaymentMethodLabel(value = '') {
       const method = normalizePlusPaymentMethodForDisplay(value);
       if (method === 'gpc-helper') {
@@ -670,6 +679,10 @@
 
       if (stepKey === 'fill-profile') {
         const latestState = await getState();
+        if (isSub2ApiDeliveryState(latestState)) {
+          await addLog('步骤 5 完成：当前流程需要导入 SUB2API，暂不标记邮箱/账号已用，等待导入成功后再标记。', 'info');
+          return;
+        }
         if (latestState.currentHotmailAccountId && isHotmailProvider(latestState)) {
           if (typeof markCurrentRegistrationAccountUsed === 'function') {
             await markCurrentRegistrationAccountUsed(latestState, {

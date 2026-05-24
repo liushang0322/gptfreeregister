@@ -140,7 +140,9 @@
       const reasonSuffix = reasonText ? `（触发原因：${reasonText}）` : '';
       const message = `步骤 2：检测到当前停留在已登录 ChatGPT 首页，已阻止自动跳过步骤 3/4/5。请先执行步骤 1 清理会话后重试。${reasonSuffix}`;
       await addLog(message, 'error');
-      throw new Error(message);
+      const error = new Error(message);
+      error.code = 'SIGNUP_ENTRY_LOGGED_IN_SESSION';
+      throw error;
     }
 
     async function sendSignupIdentity(payload = {}, options = {}) {

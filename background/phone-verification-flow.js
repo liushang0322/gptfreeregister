@@ -38,10 +38,10 @@
       HERO_SMS_COUNTRY_LABEL = 'Chile',
       HERO_SMS_SERVICE_CODE = 'dr',
       HERO_SMS_SERVICE_LABEL = 'OpenAI',
-      DEFAULT_PHONE_CODE_WAIT_SECONDS = 60,
-      DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2,
+      DEFAULT_PHONE_CODE_WAIT_SECONDS = 120,
+      DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 3,
       DEFAULT_PHONE_CODE_POLL_INTERVAL_SECONDS = 5,
-      DEFAULT_PHONE_CODE_POLL_ROUNDS = 4,
+      DEFAULT_PHONE_CODE_POLL_ROUNDS = 24,
     } = deps;
 
     const PHONE_ACTIVATION_STATE_KEY = 'currentPhoneActivation';
@@ -62,8 +62,10 @@
     const FIVE_SIM_RATE_LIMIT_ERROR_PREFIX = 'FIVE_SIM_RATE_LIMIT::';
     const PHONE_CODE_WAIT_SECONDS_MIN = 15;
     const PHONE_CODE_WAIT_SECONDS_MAX = 300;
+    const LEGACY_DEFAULT_PHONE_CODE_WAIT_SECONDS = 60;
     const PHONE_CODE_TIMEOUT_WINDOWS_MIN = 1;
     const PHONE_CODE_TIMEOUT_WINDOWS_MAX = 10;
+    const LEGACY_DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2;
     const PHONE_CODE_POLL_INTERVAL_SECONDS_MIN = 1;
     const PHONE_CODE_POLL_INTERVAL_SECONDS_MAX = 30;
     const PHONE_CODE_POLL_ROUNDS_MIN = 1;
@@ -122,6 +124,17 @@
       { prefix: '33', id: 78, label: 'France' },
       { prefix: '1', id: 187, label: 'USA' },
     ]);
+    const NEX_SMS_COUNTRY_DIAL_CODE_BY_ID = Object.freeze({
+      0: { dialCode: '7', label: 'Russia' },
+      1: { dialCode: '380', label: 'Ukraine' },
+      2: { dialCode: '7', label: 'Kazakhstan' },
+      3: { dialCode: '86', label: 'China' },
+      4: { dialCode: '63', label: 'Philippines' },
+      5: { dialCode: '95', label: 'Myanmar' },
+      6: { dialCode: '62', label: 'Indonesia' },
+      7: { dialCode: '60', label: 'Malaysia' },
+      19: { dialCode: '234', label: 'Nigeria' },
+    });
     const activationPriceHintsByKey = new Map();
     let activePhoneVerificationLogStep = null;
     let activePhoneVerificationLogStepKey = null;
@@ -244,10 +257,13 @@
 
     function resolveNexSmsCountryCandidates(state = {}) {
       const ids = normalizeNexSmsCountryOrder(state?.nexSmsCountryOrder);
-      return ids.map((id) => ({
-        id,
-        label: `Country #${id}`,
-      }));
+      return ids.map((id) => {
+        const dialConfig = getNexSmsCountryDialConfig(id);
+        return {
+          id,
+          label: dialConfig?.label || `Country #${id}`,
+        };
+      });
     }
 
     function normalizeNexSmsServiceCode(value = '', fallback = DEFAULT_NEX_SMS_SERVICE_CODE) {
@@ -363,8 +379,43 @@
       return Math.max(0, Math.floor(Number(value) || 0));
     }
 
+    function normalizePhoneNumberMaxUses(value) {
+      const parsed = Math.floor(Number(value) || DEFAULT_PHONE_NUMBER_MAX_USES);
+      return Math.max(1, Math.min(DEFAULT_PHONE_NUMBER_MAX_USES, parsed));
+    }
+
     function normalizePhoneDigits(value) {
       return String(value || '').replace(/\D+/g, '');
+    }
+
+    function normalizePhoneNumberForCountry(phoneNumber = '', dialCode = '') {
+      const raw = String(phoneNumber || '').trim();
+      const digits = normalizePhoneDigits(raw);
+      const normalizedDialCode = normalizePhoneDigits(dialCode);
+      if (!digits) {
+        return raw;
+      }
+      if (/^\s*(?:\+|00)\s*\d/.test(raw)) {
+        return `+${digits}`;
+      }
+      if (!normalizedDialCode) {
+        return raw;
+      }
+      if (digits.startsWith(normalizedDialCode) && digits.length > normalizedDialCode.length) {
+        return `+${digits}`;
+      }
+      if (digits.startsWith(`0${normalizedDialCode}`) && digits.length > normalizedDialCode.length + 1) {
+        return `+${digits.slice(1)}`;
+      }
+      if (digits.startsWith('0') && digits.length > 1) {
+        return `+${normalizedDialCode}${digits.slice(1)}`;
+      }
+      return `+${normalizedDialCode}${digits}`;
+    }
+
+    function getNexSmsCountryDialConfig(countryId) {
+      const id = normalizeNexSmsCountryId(countryId, -1);
+      return id >= 0 ? (NEX_SMS_COUNTRY_DIAL_CODE_BY_ID[id] || null) : null;
     }
 
     function phoneNumbersMatch(left, right) {
@@ -511,7 +562,7 @@
       if (!text) {
         return false;
       }
-      return /phone_max_usage_exceeded|phone_number_in_use|already\s+linked\s+to\s+the\s+maximum\s+number\s+of\s+accounts|phone\s+number\s+is\s+already\s+(?:in\s+use|linked|registered)|phone\s+number\s+has\s+already\s+been\s+used|already\s+associated\s+with\s+another\s+account|not\s+eligible\s+to\s+be\s+used|cannot\s+be\s+used\s+for\s+verification|号码.*(?:已|被).*(?:使用|占用|绑定|注册)|手机号.*(?:已|被).*(?:使用|占用|绑定|注册)|该手机号.*(?:已|被).*(?:使用|占用|绑定|注册)/i.test(text);
+      return /phone_max_usage_exceeded|phone_number_in_use|already\s+linked\s+to\s+the\s+maximum\s+number\s+of\s+accounts|phone\s+number\s+is\s+already\s+(?:in\s+use|linked|registered)|phone\s+number\s+has\s+already\s+been\s+used|already\s+associated\s+with\s+another\s+account|not\s+eligible\s+to\s+be\s+used|cannot\s+be\s+used\s+for\s+verification|(?:电话|手机)号码.*(?:关联|绑定).*最多账户|(?:电话|手机)号码.*最多.*账户|可关联的最多账户|号码.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|手机号.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|该手机号.*(?:已|被).*(?:使用|占用|绑定|注册|关联)/i.test(text);
     }
 
     function isPhoneNumberInvalidError(value) {
@@ -528,6 +579,14 @@
         return false;
       }
       return /无法向此电话号码发送验证码|无法向.*(?:电话号码|手机号|号码).*发送(?:验证码|短信)|(?:不能|无法).*发送.*(?:验证码|短信).*(?:电话号码|手机号|号码)|(?:cannot|can't|could\s*not|couldn't|unable\s+to)\s+(?:send|deliver).{0,80}(?:verification\s+code|code|sms|text(?:\s+message)?).{0,80}(?:phone|number)|(?:verification\s+code|sms|text(?:\s+message)?).{0,80}(?:cannot|can't|could\s*not|couldn't|unable\s+to).{0,80}(?:send|deliver)/i.test(text);
+    }
+
+    function isPhoneVerificationRequestLimitError(value) {
+      const text = String(value || '').trim();
+      if (!text) {
+        return false;
+      }
+      return /请求.*手机验证.*次数过多|手机验证.*次数过多|请求.*(?:验证码|验证).*次数过多|verification\s+requests?.*too\s+many|too\s+many\s+(?:phone\s+)?verification\s+requests?|too\s+many\s+requests?.*(?:phone|verification|sms)|please\s+try\s+again\s+later/i.test(text);
     }
 
     function isWhatsAppPhoneResendResult(value) {
@@ -630,6 +689,32 @@
         Math.ceil(normalizedWaitSeconds / normalizedPollIntervalSeconds)
       );
       return Math.max(normalizedConfiguredRounds, roundsNeededForWaitWindow);
+    }
+
+    function resolvePhoneCodeTimingConfig(state = {}) {
+      let waitSeconds = normalizePhoneCodeWaitSeconds(state?.phoneCodeWaitSeconds);
+      let timeoutWindows = normalizePhoneCodeTimeoutWindows(state?.phoneCodeTimeoutWindows);
+      const pollIntervalSeconds = normalizePhoneCodePollIntervalSeconds(state?.phoneCodePollIntervalSeconds);
+      const upgradedLegacyTiming = (
+        waitSeconds === LEGACY_DEFAULT_PHONE_CODE_WAIT_SECONDS
+        && timeoutWindows === LEGACY_DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS
+      );
+      if (upgradedLegacyTiming) {
+        waitSeconds = normalizePhoneCodeWaitSeconds(DEFAULT_PHONE_CODE_WAIT_SECONDS);
+        timeoutWindows = normalizePhoneCodeTimeoutWindows(DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS);
+      }
+      const pollMaxRounds = resolvePhoneCodePollMaxRoundsForWindow(
+        waitSeconds,
+        pollIntervalSeconds,
+        state?.phoneCodePollMaxRounds
+      );
+      return {
+        waitSeconds,
+        timeoutWindows,
+        pollIntervalSeconds,
+        pollMaxRounds,
+        upgradedLegacyTiming,
+      };
     }
 
     function normalizeHeroSmsReuseEnabled(value) {
@@ -791,6 +876,41 @@
       return !runningInNode;
     }
 
+    function extractHeroSmsTopCountriesPayloadForCountry(payload, countryId) {
+      const normalizedCountryId = normalizeCountryId(countryId, 0);
+      if (normalizedCountryId <= 0 || !payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return null;
+      }
+      const entries = Object.entries(payload).filter(([entryKey, entry]) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          return false;
+        }
+        const entryCountryId = normalizeCountryId(
+          entry.country ?? entry.countryId ?? entry.country_id ?? entry.id ?? entryKey,
+          0
+        );
+        return entryCountryId === normalizedCountryId;
+      }).map(([, entry]) => entry);
+      return entries.length ? entries : null;
+    }
+
+    function extractHeroSmsVerificationPayloadForCountry(payload, countryId, serviceCode = HERO_SMS_SERVICE_CODE) {
+      const normalizedCountryId = normalizeCountryId(countryId, 0);
+      const normalizedServiceCode = String(serviceCode || '').trim();
+      if (normalizedCountryId <= 0 || !normalizedServiceCode || !payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return null;
+      }
+      const serviceNode = payload?.[normalizedServiceCode];
+      if (!serviceNode || typeof serviceNode !== 'object' || Array.isArray(serviceNode)) {
+        return null;
+      }
+      const countryNode = serviceNode?.[String(normalizedCountryId)];
+      if (!countryNode || typeof countryNode !== 'object' || Array.isArray(countryNode)) {
+        return null;
+      }
+      return countryNode;
+    }
+
     async function fetchHeroSmsPricePayloads(config, countryConfig, options = {}) {
       const payloads = [];
       const errors = [];
@@ -801,6 +921,13 @@
             ? ['getPricesExtended', 'getPrices']
             : ['getPrices']
         );
+
+      const pushPayload = (payload) => {
+        if (payload === undefined || payload === null || payload === '') {
+          return;
+        }
+        payloads.push(payload);
+      };
 
       for (const action of actions) {
         try {
@@ -822,6 +949,52 @@
         }
       }
 
+      if (shouldUseHeroSmsExpandedPriceLookup(options.state || {})) {
+        try {
+          pushPayload(await fetchHeroSmsPayload(config, {
+            action: 'getPricesForVerification',
+            service: HERO_SMS_SERVICE_CODE,
+            country: countryConfig.id,
+          }, 'HeroSMS getPricesForVerification'));
+        } catch (error) {
+          errors.push({
+            action: 'getPricesForVerification',
+            message: describeHeroSmsPayload(error?.payload || error?.message || ''),
+          });
+        }
+
+        try {
+          const payload = await fetchHeroSmsPayload(config, {
+            action: 'getTopCountriesByService',
+            service: HERO_SMS_SERVICE_CODE,
+            freePrice: 'true',
+          }, 'HeroSMS getTopCountriesByService');
+          pushPayload(extractHeroSmsTopCountriesPayloadForCountry(payload, countryConfig.id));
+        } catch (error) {
+          errors.push({
+            action: 'getTopCountriesByService',
+            message: describeHeroSmsPayload(error?.payload || error?.message || ''),
+          });
+        }
+
+        try {
+          const payload = await fetchHeroSmsPayload(config, {
+            action: 'getPricesVerification',
+            service: HERO_SMS_SERVICE_CODE,
+            country: countryConfig.id,
+          }, 'HeroSMS getPricesVerification');
+          pushPayload(
+            extractHeroSmsVerificationPayloadForCountry(payload, countryConfig.id, HERO_SMS_SERVICE_CODE)
+            || payload
+          );
+        } catch (error) {
+          errors.push({
+            action: 'getPricesVerification',
+            message: describeHeroSmsPayload(error?.payload || error?.message || ''),
+          });
+        }
+      }
+
       return {
         payloads,
         errors,
@@ -837,10 +1010,23 @@
         return candidates;
       }
 
-      const cost = normalizeHeroSmsPrice(payload.cost);
+      const cost = normalizeHeroSmsPrice(payload.cost ?? payload.price ?? payload.Price);
       if (cost !== null) {
         candidates.push(cost);
       }
+
+      [payload.freePriceMap, payload.priceMap].forEach((tierMap) => {
+        if (!tierMap || typeof tierMap !== 'object' || Array.isArray(tierMap)) {
+          return;
+        }
+        Object.entries(tierMap).forEach(([priceKey, countRaw]) => {
+          const keyedPrice = normalizeHeroSmsPrice(priceKey);
+          const stockCount = Number(countRaw);
+          if (keyedPrice !== null && Number.isFinite(stockCount)) {
+            candidates.push(keyedPrice);
+          }
+        });
+      });
 
       Object.entries(payload).forEach(([key]) => {
         const keyedPrice = normalizeHeroSmsPrice(key);
@@ -868,17 +1054,19 @@
       const userLimit = normalizeHeroSmsPriceLimit(state.heroSmsMaxPrice);
       const inStockCandidates = buildSortedUniquePriceCandidates(
         (Array.isArray(payloads) ? payloads : [])
-          .flatMap((payload) => collectHeroSmsPriceCandidates(payload, []))
+          .flatMap((payload) => collectHeroSmsPriceCandidates(payload, [])),
+        { limit: null }
       );
       const allCatalogCandidates = buildSortedUniquePriceCandidates(
         (Array.isArray(payloads) ? payloads : [])
-          .flatMap((payload) => collectHeroSmsPriceCandidatesIncludingZeroStock(payload, []))
+          .flatMap((payload) => collectHeroSmsPriceCandidatesIncludingZeroStock(payload, [])),
+        { limit: null }
       );
       const mergedCandidates = inStockCandidates.length
         ? buildSortedUniquePriceCandidates([
           ...inStockCandidates,
           ...allCatalogCandidates,
-        ])
+        ], { limit: null })
         : [];
       const minCatalogPrice = allCatalogCandidates.length
         ? allCatalogCandidates[0]
@@ -981,6 +1169,7 @@
         activation_not_found: '接码订单不存在或已失效',
         resend_phone_banned: 'OpenAI 无法向该号码发送短信',
         phone_max_usage_exceeded: '手机号达到使用上限',
+        phone_verification_request_limit: '手机验证请求次数过多',
         resend_server_error: '重发短信后进入服务器错误页',
         whatsapp_resend_channel: '页面重发入口切换为 WhatsApp 通道',
         unknown: '未知',
@@ -1156,6 +1345,12 @@
       }
       if (/failed\s+to\s+acquire\s+(?:a\s+)?phone(?:\s+number|\s+activation)?/i.test(text)) {
         return '获取手机号失败';
+      }
+      if (normalizePhoneSmsProvider(providerId) === PHONE_SMS_PROVIDER_NEXSMS) {
+        const nexSmsNoNumbersMatch = text.match(/^NexSMS\s+已尝试\s+\d+\s+个候选国家，均无可用号码：(.+?)[。.]?$/i);
+        if (nexSmsNoNumbersMatch) {
+          return `暂无可用号码：${nexSmsNoNumbersMatch[1].trim()}`;
+        }
       }
       if (/no\s+numbers\s+available\s+across|no\s+free\s+phones|numbers?\s+not\s+found|no\s+numbers\s+within|暂无可用号码|均无可用号码|无可用号码|\bNO_NUMBERS\b/i.test(text)) {
         return formatPhoneSmsApiFailureReason(text);
@@ -1398,17 +1593,20 @@
         ...(provider === PHONE_SMS_PROVIDER_FIVE_SIM ? { countryCode: countryId } : {}),
         ...(countryLabel ? { countryLabel } : {}),
         successfulUses: normalizeUseCount(record.successfulUses),
-        maxUses: Math.max(1, Math.floor(Number(record.maxUses) || DEFAULT_PHONE_NUMBER_MAX_USES)),
+        maxUses: normalizePhoneNumberMaxUses(record.maxUses),
         ...(expiresAt > 0 ? { expiresAt } : {}),
         ...(statusAction ? { statusAction } : {}),
         ...(record.source ? { source: String(record.source || '').trim() } : {}),
         ...(record.nexSmsNumberType ? { nexSmsNumberType: normalizeNexSmsNumberType(record.nexSmsNumberType) } : {}),
+        ...(record.nexSmsRawPhoneNumber ? { nexSmsRawPhoneNumber: String(record.nexSmsRawPhoneNumber || '').trim() } : {}),
         ...(record.premiumCateId !== undefined ? { premiumCateId: normalizeNexSmsPremiumCateId(record.premiumCateId) } : {}),
         ...(record.premiumCardType !== undefined ? { premiumCardType: normalizeNexSmsPremiumCardType(record.premiumCardType) } : {}),
         ...(record.premiumAppName ? { premiumAppName: String(record.premiumAppName || '').trim() } : {}),
         ...(record.premiumAppId !== undefined ? { premiumAppId: Math.max(0, Math.floor(Number(record.premiumAppId) || 0)) } : {}),
         ...(record.phoneCodeReceived ? { phoneCodeReceived: true } : {}),
         ...(record.phoneCodeReceivedAt ? { phoneCodeReceivedAt: Math.max(0, Number(record.phoneCodeReceivedAt) || 0) } : {}),
+        ...(record.lastPhoneCode ? { lastPhoneCode: String(record.lastPhoneCode || '').trim() } : {}),
+        ...(record.lastPhoneCodeAt ? { lastPhoneCodeAt: Math.max(0, Number(record.lastPhoneCodeAt) || 0) } : {}),
       };
     }
 
@@ -1440,7 +1638,7 @@
         countryId,
         ...(countryLabel ? { countryLabel } : {}),
         successfulUses: normalizeUseCount(record.successfulUses),
-        maxUses: Math.max(1, Math.floor(Number(record.maxUses) || DEFAULT_PHONE_NUMBER_MAX_USES)),
+        maxUses: normalizePhoneNumberMaxUses(record.maxUses),
         ...(statusAction ? { statusAction } : {}),
         source: 'free-manual-reuse',
         recordedAt: Math.max(0, Number(record.recordedAt) || Date.now()),
@@ -1462,15 +1660,17 @@
       };
     }
 
-    function markActivationPhoneCodeReceived(activation) {
+    function markActivationPhoneCodeReceived(activation, code = '') {
       const normalizedActivation = normalizeActivation(activation);
       if (!normalizedActivation) {
         return null;
       }
+      const normalizedCode = String(code || '').trim();
       return {
         ...normalizedActivation,
         phoneCodeReceived: true,
         phoneCodeReceivedAt: normalizedActivation.phoneCodeReceivedAt || Date.now(),
+        ...(normalizedCode ? { lastPhoneCode: normalizedCode, lastPhoneCodeAt: Date.now() } : {}),
       };
     }
 
@@ -1606,7 +1806,7 @@
         fallback.successfulUses = normalizeUseCount(record.successfulUses);
       }
       if (Object.prototype.hasOwnProperty.call(record, 'maxUses')) {
-        fallback.maxUses = Math.max(1, Math.floor(Number(record.maxUses) || DEFAULT_PHONE_NUMBER_MAX_USES));
+        fallback.maxUses = normalizePhoneNumberMaxUses(record.maxUses);
       }
       if (statusAction) {
         fallback.statusAction = statusAction;
@@ -1663,8 +1863,9 @@
       return url.toString();
     }
 
-    function buildPhoneCodeTimeoutError(lastResponse = '') {
-      const suffix = lastResponse ? ` HeroSMS 最后状态：${lastResponse}` : '';
+    function buildPhoneCodeTimeoutError(lastResponse = '', providerLabel = '接码平台') {
+      const label = String(providerLabel || '').trim() || '接码平台';
+      const suffix = lastResponse ? ` ${label} 最后状态：${lastResponse}` : '';
       return new Error(`${PHONE_CODE_TIMEOUT_ERROR_PREFIX}等待手机验证码超时。${suffix}`);
     }
 
@@ -1861,6 +2062,16 @@
       );
     }
 
+    function buildPhoneReplacementAcquireFailureError(previousFailure = {}, acquireError = null) {
+      const previousPhone = String(previousFailure?.phoneNumber || '').trim();
+      const previousReason = formatStep9Reason(previousFailure?.reason || 'unknown');
+      const acquireMessage = String(acquireError?.message || acquireError || '获取新手机号失败').trim();
+      const phoneText = previousPhone ? `当前号码 ${previousPhone}` : '当前号码';
+      return new Error(
+        `步骤 9：${phoneText} 未完成手机号验证（${previousReason}）；准备换号时获取新手机号失败：${acquireMessage}`
+      );
+    }
+
     function sanitizePhoneCodeTimeoutError(error) {
       const message = String(error?.message || '');
       if (!message.startsWith(PHONE_CODE_TIMEOUT_ERROR_PREFIX)) {
@@ -2009,11 +2220,12 @@
 
     function describeNexSmsPayload(raw) {
       if (typeof raw === 'string') {
-        return raw.trim();
+        const text = raw.trim();
+        return /^success$/i.test(text) ? '' : text;
       }
       if (raw && typeof raw === 'object') {
         const message = String(raw.message || raw.error || raw.msg || raw.statusText || '').trim();
-        if (message) {
+        if (message && !/^success$/i.test(message)) {
           return message;
         }
         try {
@@ -2175,7 +2387,7 @@
                 : {}
             ),
             successfulUses: normalizedFallback?.successfulUses ?? directActivation.successfulUses,
-            maxUses: normalizedFallback?.maxUses ?? directActivation.maxUses,
+            maxUses: normalizePhoneNumberMaxUses(normalizedFallback?.maxUses ?? directActivation.maxUses),
             ...(statusAction ? { statusAction } : {}),
           };
         }
@@ -2191,7 +2403,7 @@
             countryId: normalizedFallback?.countryId || HERO_SMS_COUNTRY_ID,
             ...(normalizedFallback?.countryLabel ? { countryLabel: normalizedFallback.countryLabel } : {}),
             successfulUses: normalizedFallback?.successfulUses ?? 0,
-            maxUses: normalizedFallback?.maxUses ?? DEFAULT_PHONE_NUMBER_MAX_USES,
+            maxUses: normalizePhoneNumberMaxUses(normalizedFallback?.maxUses),
             ...(normalizedFallback?.statusAction ? { statusAction: normalizedFallback.statusAction } : {}),
           };
         }
@@ -2273,13 +2485,26 @@
         return candidates;
       }
 
-      const cost = normalizeHeroSmsPrice(payload.cost);
+      const cost = normalizeHeroSmsPrice(payload.cost ?? payload.price ?? payload.Price);
       if (cost !== null) {
         const stockState = resolveHeroSmsStockState(payload);
         if (!stockState.hasStockField || stockState.stockCount > 0) {
           candidates.push(cost);
         }
       }
+
+      [payload.freePriceMap, payload.priceMap].forEach((tierMap) => {
+        if (!tierMap || typeof tierMap !== 'object' || Array.isArray(tierMap)) {
+          return;
+        }
+        Object.entries(tierMap).forEach(([priceKey, countRaw]) => {
+          const keyedPrice = normalizeHeroSmsPrice(priceKey);
+          const stockCount = Number(countRaw);
+          if (keyedPrice !== null && Number.isFinite(stockCount) && stockCount > 0) {
+            candidates.push(keyedPrice);
+          }
+        });
+      });
 
       // Some HeroSMS responses expose price tiers as object keys:
       // { "0.05": { count: 0 }, "0.35": { count: 12 } }.
@@ -2316,8 +2541,8 @@
       return Math.min(...candidates);
     }
 
-    function buildSortedUniquePriceCandidates(values = []) {
-      return Array.from(
+    function buildSortedUniquePriceCandidates(values = [], options = {}) {
+      const sorted = Array.from(
         new Set(
           values
             .map((value) => normalizeHeroSmsPrice(value))
@@ -2325,8 +2550,12 @@
             .map((value) => Math.round(value * 10000) / 10000)
         )
       )
-        .sort((left, right) => left - right)
-        .slice(0, MAX_PHONE_PRICE_CANDIDATES);
+        .sort((left, right) => left - right);
+      if (options?.limit === null) {
+        return sorted;
+      }
+      const limit = Math.max(0, Math.floor(Number(options?.limit) || MAX_PHONE_PRICE_CANDIDATES));
+      return sorted.slice(0, limit);
     }
 
     function isHeroSmsNoNumbersPayload(payload) {
@@ -2804,7 +3033,7 @@
         countryCode,
         countryLabel: countryLabel || countryCode,
         successfulUses: normalizeUseCount(payload.successfulUses ?? fallback.successfulUses ?? 0),
-        maxUses: Math.max(1, Math.floor(Number(payload.maxUses ?? fallback.maxUses) || DEFAULT_PHONE_NUMBER_MAX_USES)),
+        maxUses: normalizePhoneNumberMaxUses(payload.maxUses ?? fallback.maxUses),
         ...(() => {
           const expiresAt = normalizeTimestampMs(
             payload.expiresAt
@@ -3210,8 +3439,13 @@
     }
 
     function isNexSmsNoNumbersError(payloadOrMessage) {
-      const text = describeNexSmsPayload(payloadOrMessage);
-      return /numbers?\s+not\s+found|暂无可用|no\s+numbers|no\s+stock|库存.*0|not\s+available/i.test(text);
+      const text = [
+        describeNexSmsPayload(payloadOrMessage),
+        payloadOrMessage && typeof payloadOrMessage === 'object' && !Array.isArray(payloadOrMessage)
+          ? JSON.stringify(payloadOrMessage)
+          : '',
+      ].filter(Boolean).join(' ');
+      return /\bNO_NUMBERS\b|numbers?\s+not\s+found|暂无可用|no\s+numbers|no\s+stock|库存.*0|not\s+available/i.test(text);
     }
 
     function isNexSmsPendingMessage(payloadOrMessage) {
@@ -3239,6 +3473,81 @@
         return payload.list;
       }
       return [];
+    }
+
+    function buildNexSmsPhoneQueryCandidates(activation) {
+      const normalizedActivation = normalizeActivation(activation);
+      const rawPhoneNumber = String(
+        activation?.nexSmsRawPhoneNumber
+        || normalizedActivation?.nexSmsRawPhoneNumber
+        || ''
+      ).trim();
+      const normalizedPhoneNumber = String(normalizedActivation?.phoneNumber || activation?.phoneNumber || '').trim();
+      const countryId = normalizeNexSmsCountryId(normalizedActivation?.countryId ?? activation?.countryId, 0);
+      const dialCode = String(getNexSmsCountryDialConfig(countryId)?.dialCode || '').replace(/\D+/g, '');
+      const candidates = [];
+      const pushCandidate = (value) => {
+        const trimmed = String(value || '').trim();
+        if (!trimmed || candidates.includes(trimmed)) {
+          return;
+        }
+        candidates.push(trimmed);
+      };
+      pushCandidate(normalizedPhoneNumber);
+      pushCandidate(rawPhoneNumber);
+      const digits = String(normalizedPhoneNumber || rawPhoneNumber || '').replace(/\D+/g, '');
+      if (digits) {
+        pushCandidate(digits);
+        pushCandidate(`+${digits}`);
+        if (dialCode && digits.startsWith(dialCode) && digits.length > dialCode.length) {
+          const national = digits.slice(dialCode.length);
+          pushCandidate(national);
+          pushCandidate(`0${national}`);
+        }
+      }
+      return candidates;
+    }
+
+    function collectNexSmsCodeCandidates(payload) {
+      const candidates = [];
+      const seenObjects = new Set();
+      const pushCandidate = (value) => {
+        const text = String(value ?? '').trim();
+        if (text) {
+          candidates.push(text);
+        }
+      };
+      const visit = (value) => {
+        if (value === null || value === undefined) {
+          return;
+        }
+        if (typeof value === 'string' || typeof value === 'number') {
+          pushCandidate(value);
+          return;
+        }
+        if (typeof value !== 'object') {
+          return;
+        }
+        if (seenObjects.has(value)) {
+          return;
+        }
+        seenObjects.add(value);
+        ['code', 'smsCode', 'sms_code', 'otp', 'verificationCode', 'verifyCode', 'pin'].forEach((key) => {
+          pushCandidate(value[key]);
+        });
+        ['text', 'message', 'msg', 'sms', 'content', 'body', 'payload'].forEach((key) => {
+          visit(value[key]);
+        });
+        if (Array.isArray(value)) {
+          value.forEach((item) => visit(item));
+          return;
+        }
+        ['data', 'list', 'items', 'records', 'messages', 'smsList', 'smsRecords', 'result', 'latest'].forEach((key) => {
+          visit(value[key]);
+        });
+      };
+      visit(payload);
+      return candidates;
     }
 
     function nexSmsTextMatchesQuery(value = '', query = '') {
@@ -3394,7 +3703,11 @@
     function collectNexSmsPriceCandidates(countryData = {}) {
       const candidates = [];
       const pushCandidate = (value) => {
-        const numeric = Number(value);
+        let numeric = Number(value);
+        if (!Number.isFinite(numeric) && typeof value === 'string') {
+          const match = value.replace(',', '.').match(/\d+(?:\.\d+)?/);
+          numeric = match ? Number(match[0]) : Number.NaN;
+        }
         if (Number.isFinite(numeric) && numeric > 0) {
           candidates.push(Math.round(numeric * 10000) / 10000);
         }
@@ -3404,17 +3717,129 @@
       pushCandidate(countryData.medianPrice);
       pushCandidate(countryData.maxPrice);
 
-      if (countryData.priceMap && typeof countryData.priceMap === 'object') {
-        Object.entries(countryData.priceMap).forEach(([priceKey, count]) => {
-          const availableCount = Number(count);
-          if (!Number.isFinite(availableCount) || availableCount <= 0) {
+      const resolveStockCount = (value) => {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          const stockCandidates = [
+            value.count,
+            value.stock,
+            value.available,
+            value.quantity,
+            value.qty,
+            value.num,
+            value.left,
+            value.remaining,
+            value.inventory,
+          ]
+            .map((entry) => Number(entry))
+            .filter((entry) => Number.isFinite(entry));
+          if (stockCandidates.length) {
+            return Math.max(...stockCandidates);
+          }
+          return null;
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : null;
+      };
+
+      [countryData.priceMap, countryData.freePriceMap].forEach((priceMap) => {
+        if (!priceMap || typeof priceMap !== 'object') {
+          return;
+        }
+        Object.entries(priceMap).forEach(([priceKey, count]) => {
+          const availableCount = resolveStockCount(count);
+          if (availableCount !== null && availableCount <= 0) {
             return;
           }
           pushCandidate(priceKey);
+          if (count && typeof count === 'object' && !Array.isArray(count)) {
+            pushCandidate(count.price ?? count.cost ?? count.amount ?? count.value);
+          }
         });
-      }
+      });
 
-      return buildSortedUniquePriceCandidates(candidates);
+      [countryData.prices, countryData.priceList, countryData.tiers].forEach((entries) => {
+        if (!Array.isArray(entries)) {
+          return;
+        }
+        entries.forEach((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            pushCandidate(entry);
+            return;
+          }
+          const availableCount = resolveStockCount(entry);
+          if (availableCount !== null && availableCount <= 0) {
+            return;
+          }
+          pushCandidate(entry.price ?? entry.cost ?? entry.amount ?? entry.value);
+        });
+      });
+
+      return buildSortedUniquePriceCandidates(candidates, { limit: null });
+    }
+
+    function resolveNexSmsCountryDataFromPayload(payload, countryId) {
+      const normalizedCountryId = normalizeNexSmsCountryId(countryId, -1);
+      const data = payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? (payload.data ?? payload.result ?? payload)
+        : {};
+      const hasPriceShape = (value) => Boolean(
+        value
+        && typeof value === 'object'
+        && !Array.isArray(value)
+        && (
+          value.priceMap
+          || value.freePriceMap
+          || value.prices
+          || value.priceList
+          || value.tiers
+          || value.minPrice !== undefined
+          || value.medianPrice !== undefined
+          || value.maxPrice !== undefined
+          || value.price !== undefined
+          || value.cost !== undefined
+        )
+      );
+      const countryMatches = (value) => {
+        if (!value || typeof value !== 'object') {
+          return false;
+        }
+        const rawId = value.countryId ?? value.country_id ?? value.country ?? value.id;
+        return normalizeNexSmsCountryId(rawId, -1) === normalizedCountryId;
+      };
+      const queue = [data];
+      const fallbackPriceNodes = [];
+      const seen = new Set();
+      while (queue.length) {
+        const current = queue.shift();
+        if (!current || typeof current !== 'object' || seen.has(current)) {
+          continue;
+        }
+        seen.add(current);
+        if (!Array.isArray(current) && hasPriceShape(current)) {
+          if (countryMatches(current)) {
+            return current;
+          }
+          fallbackPriceNodes.push(current);
+        }
+        if (Array.isArray(current)) {
+          current.forEach((item) => queue.push(item));
+          continue;
+        }
+        const directById = current[String(normalizedCountryId)];
+        if (directById && typeof directById === 'object') {
+          queue.unshift(directById);
+        }
+        [
+          current.countries,
+          current.countryList,
+          current.list,
+          current.items,
+          current.records,
+          current.services,
+          current.serviceList,
+        ].forEach((entry) => queue.push(entry));
+      }
+      return fallbackPriceNodes[0] || (hasPriceShape(data) ? data : {});
     }
 
     async function resolveNexSmsCountryPricePlan(config, countryConfig, state = {}) {
@@ -3436,9 +3861,7 @@
       if (!isNexSmsSuccessPayload(payload)) {
         throw createPhoneSmsActionFailureError('NexSMS getCountryByService', describeNexSmsPayload(payload) || 'empty response');
       }
-      const countryData = (payload && typeof payload === 'object' && !Array.isArray(payload))
-        ? (payload.data || {})
-        : {};
+      const countryData = resolveNexSmsCountryDataFromPayload(payload, countryId);
       const countryLabel = normalizeCountryLabel(
         countryData.countryName || countryConfig?.label,
         `Country #${countryId}`
@@ -3452,7 +3875,8 @@
             ? Math.round(minPrice * 10000) / 10000
             : null;
         })();
-      const userLimit = normalizeHeroSmsPriceLimit(state?.heroSmsMaxPrice);
+      const priceRange = resolvePhonePriceRange(state, PHONE_SMS_PROVIDER_NEXSMS);
+      const userLimit = priceRange.maxPriceLimit;
       const filteredPrices = userLimit === null
         ? prices
         : prices.filter((price) => price <= userLimit);
@@ -3481,6 +3905,9 @@
       const phoneNumber = String(
         data.phoneNumber
         || data.phone
+        || data.tel
+        || data.number
+        || data.mobile
         || phoneCandidates[0]
         || fallback.phoneNumber
         || ''
@@ -3492,23 +3919,26 @@
         data.countryId ?? fallback.countryId,
         0
       );
+      const dialConfig = getNexSmsCountryDialConfig(countryId);
+      const normalizedPhoneNumber = normalizePhoneNumberForCountry(phoneNumber, dialConfig?.dialCode || '');
       const countryLabel = normalizeCountryLabel(
-        data.countryName || fallback.countryLabel,
-        `Country #${countryId}`
+        data.countryName || fallback.countryLabel || dialConfig?.label,
+        dialConfig?.label || `Country #${countryId}`
       );
       const serviceCode = normalizeNexSmsServiceCode(
         data.serviceCode || fallback.serviceCode || DEFAULT_NEX_SMS_SERVICE_CODE,
         DEFAULT_NEX_SMS_SERVICE_CODE
       );
       return {
-        activationId: phoneNumber,
-        phoneNumber,
+        activationId: normalizedPhoneNumber,
+        phoneNumber: normalizedPhoneNumber,
         provider: PHONE_SMS_PROVIDER_NEXSMS,
         serviceCode,
         countryId,
         countryLabel,
+        nexSmsRawPhoneNumber: phoneNumber,
         successfulUses: normalizeUseCount(fallback.successfulUses ?? 0),
-        maxUses: 1,
+        maxUses: normalizePhoneNumberMaxUses(fallback.maxUses),
       };
     }
 
@@ -3632,7 +4062,9 @@
         for (const attempt of candidateAttempts) {
           const countryId = normalizeNexSmsCountryId(attempt.countryConfig.id, -1);
           const countryLabel = normalizeCountryLabel(attempt.countryConfig.label, `Country #${countryId}`);
-          const countryPriceFloor = countryPriceFloorByCountryId.get(String(countryId)) ?? null;
+          // NexSMS 同一价格档位可以继续分配不同号码；不要因为上一个号码失败
+          // 就要求后续必须购买更高价格，否则会误报“上下限内无号”。
+          const countryPriceFloor = null;
           let pricePlan = attempt.pricePlan;
           if (!pricePlan) {
             try {
@@ -3656,7 +4088,7 @@
                 `${countryLabel}: 价格上限 ${pricePlan.userLimit} 内暂无可用号码；平台最低价=${pricePlan.minCatalogPrice}`
               );
             } else {
-              const reason = describeNexSmsPayload(pricePlan.rawPayload) || '无可用价格档位';
+              const reason = describeNexSmsPayload(pricePlan.rawPayload) || '接口成功但未解析到可用价格/库存档位';
               noNumbersByCountry.push(`${countryLabel}: ${reason}`);
               retryableNoNumberCountries.push(countryLabel);
             }
@@ -3691,6 +4123,10 @@
                   : (hasAlternativeCountries ? [] : candidatePrices.slice(0, 1))
               )
               : (floorFilteredPrices.length ? floorFilteredPrices : candidatePrices);
+            await addLog(
+              `步骤 9：NexSMS ${countryLabel} 价格方案：可用档位=[${pricePlan.prices.join(', ')}]，本轮尝试=[${pricesToTry.join(', ')}]，价格区间=${formatPhonePriceRangeText(minPriceLimit, maxPriceLimit)}。`,
+              'info'
+            );
             if (!pricesToTry.length) {
               if (priceRange.hasMinPriceLimit && !rangeFilteredPrices.length) {
                 noNumbersByCountry.push(
@@ -3707,11 +4143,12 @@
                   `${countryLabel}: 当前回退尝试没有高于 ${countryPriceFloor} 的价格档位`
                 );
               } else {
-                noNumbersByCountry.push(`${countryLabel}: ${describeNexSmsPayload(pricePlan.rawPayload) || '暂无可用号码'}`);
+                noNumbersByCountry.push(`${countryLabel}: ${describeNexSmsPayload(pricePlan.rawPayload) || '接口成功但未解析到可用价格/库存档位'}`);
                 retryableNoNumberCountries.push(countryLabel);
               }
               continue;
             }
+            const purchaseNoNumbersByPrice = [];
             for (const price of pricesToTry) {
             try {
               const payload = await fetchNexSmsPayload(
@@ -3730,6 +4167,7 @@
               );
               if (!isNexSmsSuccessPayload(payload)) {
                 if (isNexSmsNoNumbersError(payload)) {
+                  purchaseNoNumbersByPrice.push(`${price}: ${formatPhoneSmsApiFailureReason(describeNexSmsPayload(payload) || '暂无可用号码')}`);
                   continue;
                 }
                 if (isNexSmsTerminalError(payload)) {
@@ -3755,13 +4193,16 @@
                 throw createPhoneSmsActionFailureError('NexSMS purchase', describeNexSmsPayload(error?.payload || error?.message) || 'unknown terminal error', error?.payload, error?.status);
               }
               if (isNexSmsNoNumbersError(error?.payload || error?.message)) {
+                purchaseNoNumbersByPrice.push(`${price}: ${formatPhoneSmsApiFailureReason(describeNexSmsPayload(error?.payload || error?.message) || error?.message || '暂无可用号码')}`);
                 continue;
               }
               lastError = error;
             }
           }
 
-          const fallbackReason = describeNexSmsPayload(pricePlan.rawPayload) || '暂无可用号码';
+          const fallbackReason = purchaseNoNumbersByPrice.length
+            ? `尝试价格 ${purchaseNoNumbersByPrice.join('；')} 均无可用号码`
+            : (describeNexSmsPayload(pricePlan.rawPayload) || '接口成功但未解析到可用价格/库存档位');
           noNumbersByCountry.push(`${countryLabel}: ${fallbackReason}`);
           retryableNoNumberCountries.push(countryLabel);
         }
@@ -3940,10 +4381,15 @@
           });
           const pricePlan = attempt.pricePlan || await resolvePhoneActivationPricePlan(config, countryConfig, state);
           let noNumbersObservedInCountry = false;
+          const isPricePriorityMode = (
+            acquirePriority === HERO_SMS_ACQUIRE_PRIORITY_PRICE
+            || acquirePriority === HERO_SMS_ACQUIRE_PRIORITY_PRICE_HIGH
+          );
           const useMaxPriceAsCeilingOnly = (
             maxPriceLimit !== null
             && minPriceLimit === null
             && preferredPriceTier === null
+            && !isPricePriorityMode
           );
           const effectiveCountryPriceFloor = useMaxPriceAsCeilingOnly ? null : countryPriceFloor;
 
@@ -4053,13 +4499,23 @@
           for (const maxPrice of purchaseMaxPrices) {
             for (const requestAction of requestActions) {
               try {
-                const fixedPrice = false;
+                const fixedPrice = Boolean(
+                  !pricePlan?.syntheticUserLimitProbe
+                  && !useMaxPriceAsCeilingOnly
+                  && Number.isFinite(Number(maxPrice))
+                  && Number(maxPrice) > 0
+                  && (
+                    acquirePriority === HERO_SMS_ACQUIRE_PRIORITY_PRICE_HIGH
+                    || preferredPriceTier !== null
+                    || minPriceLimit !== null
+                  )
+                );
                 const purchaseLimitText = maxPrice === null || maxPrice === undefined ? '自动' : maxPrice;
                 const referencePriceText = purchaseReferencePrice === null || purchaseReferencePrice === undefined
                   ? ''
                   : `，参考档位 ${purchaseReferencePrice}`;
                 await addLog(
-                  `步骤 9：HeroSMS ${countryConfig.label} 正在尝试${formatHeroSmsActionName(requestAction)}，购买上限 ${purchaseLimitText}${referencePriceText}。`,
+                  `步骤 9：HeroSMS ${countryConfig.label} 正在尝试${formatHeroSmsActionName(requestAction)}，购买上限 ${purchaseLimitText}${fixedPrice ? '（锁定档位）' : ''}${referencePriceText}。`,
                   'info'
                 );
                 const payload = await requestPhoneActivationWithPrice(
@@ -4211,7 +4667,11 @@
         return nextActivation;
       }
       if (config.provider === PHONE_SMS_PROVIDER_NEXSMS) {
-        throw new Error('NexSMS 当前流程不支持复用手机号订单。');
+        return {
+          ...normalizedActivation,
+          activationId: normalizedActivation.phoneNumber,
+          source: 'nexsms-reuse',
+        };
       }
       const payload = await fetchHeroSmsPayload(config, {
         action: 'reactivate',
@@ -4250,10 +4710,13 @@
         const payload = await fetchFiveSimPayload(config, endpoint, actionLabel || '5sim set status');
         return describeFiveSimPayload(payload);
       }
-        if (config.provider === PHONE_SMS_PROVIDER_NEXSMS) {
-          if (normalizedActivation.source === 'nexsms-premium' || normalizedActivation.nexSmsNumberType === NEX_SMS_NUMBER_TYPE_PREMIUM) {
-            return 'NexSMS premium close skipped';
-          }
+      if (config.provider === PHONE_SMS_PROVIDER_NEXSMS) {
+        if (normalizedActivation.source === 'nexsms-reuse') {
+          return 'NexSMS reuse close skipped';
+        }
+        if (normalizedActivation.source === 'nexsms-premium' || normalizedActivation.nexSmsNumberType === NEX_SMS_NUMBER_TYPE_PREMIUM) {
+          return 'NexSMS premium close skipped';
+        }
           if (normalizedStatus === 6) {
             return 'NexSMS complete skipped';
           }
@@ -4345,6 +4808,10 @@
       const reusableActivation = normalizeActivation(state[REUSABLE_PHONE_ACTIVATION_STATE_KEY]);
       if (phoneNumbersMatch(reusableActivation?.phoneNumber, rejectedPhoneNumber)) {
         updates[REUSABLE_PHONE_ACTIVATION_STATE_KEY] = null;
+      }
+      const preferredActivation = normalizeActivation(state[PREFERRED_PHONE_ACTIVATION_STATE_KEY]);
+      if (phoneNumbersMatch(preferredActivation?.phoneNumber, rejectedPhoneNumber)) {
+        updates[PREFERRED_PHONE_ACTIVATION_STATE_KEY] = null;
       }
       const reusablePool = readReusableActivationPoolFromState(state);
       const nextReusablePool = reusablePool.filter((entry) => (
@@ -4567,6 +5034,7 @@
       const start = Date.now();
       let lastResponse = '';
       let pollCount = 0;
+      const previousPhoneCode = String(normalizedActivation.lastPhoneCode || '').trim();
       const extractVerificationCode = (rawCode) => {
         const trimmed = String(rawCode || '').trim();
         if (!trimmed) {
@@ -4574,6 +5042,10 @@
         }
         const digitMatch = trimmed.match(/\b(\d{4,8})\b/);
         return digitMatch?.[1] || '';
+      };
+      const isFreshPhoneCode = (code) => {
+        const normalizedCode = String(code || '').trim();
+        return Boolean(normalizedCode && normalizedCode !== previousPhoneCode);
       };
       const emitWaitingForCode = async (statusText) => {
         if (typeof options.onWaitingForCode === 'function') {
@@ -4607,7 +5079,7 @@
           const smsCode = directCode || smsList
             .map((smsItem) => extractVerificationCode(smsItem?.code || smsItem?.text || smsItem?.message || ''))
             .find(Boolean);
-          if (smsCode) {
+          if (isFreshPhoneCode(smsCode)) {
             return smsCode;
           }
 
@@ -4635,42 +5107,57 @@
           throw createPhoneSmsActionFailureError('5sim check activation', text || statusText || 'empty response');
         }
 
-        throw buildPhoneCodeTimeoutError(lastResponse);
+        throw buildPhoneCodeTimeoutError(lastResponse, '5sim');
       }
 
       if (config.provider === PHONE_SMS_PROVIDER_NEXSMS) {
         const isPremiumActivation = normalizedActivation.source === 'nexsms-premium'
           || normalizedActivation.nexSmsNumberType === NEX_SMS_NUMBER_TYPE_PREMIUM;
+        const phoneQueryCandidates = buildNexSmsPhoneQueryCandidates(normalizedActivation);
         while (Date.now() - start < timeoutMs) {
           if (maxRounds > 0 && pollCount >= maxRounds) {
             break;
           }
           throwIfStopped();
-          const payload = isPremiumActivation
-            ? await fetchNexSmsPayload(
-              config,
-              '/api/premium/sms-records',
-              'NexSMS premium sms records',
-              {
-                query: {
-                  page: 1,
-                  pageSize: 10,
-                  tel: normalizedActivation.phoneNumber,
-                },
-              }
-            )
-            : await fetchNexSmsPayload(
-              config,
-              '/api/sms/messages',
-              'NexSMS get sms messages',
-              {
-                query: {
-                  phoneNumber: normalizedActivation.phoneNumber,
-                  format: 'json_latest',
-                },
-              }
-            );
-          const text = describeNexSmsPayload(payload);
+          const payloads = [];
+          for (const phoneQueryCandidate of phoneQueryCandidates) {
+            const payload = isPremiumActivation
+              ? await fetchNexSmsPayload(
+                config,
+                '/api/premium/sms-records',
+                'NexSMS premium sms records',
+                {
+                  query: {
+                    page: 1,
+                    pageSize: 10,
+                    tel: phoneQueryCandidate,
+                  },
+                }
+              )
+              : await fetchNexSmsPayload(
+                config,
+                '/api/sms/messages',
+                'NexSMS get sms messages',
+                {
+                  query: {
+                    phoneNumber: phoneQueryCandidate,
+                    format: 'json_latest',
+                  },
+                }
+              );
+            payloads.push({ phoneQueryCandidate, payload });
+            const hasCode = isNexSmsSuccessPayload(payload)
+              && collectNexSmsCodeCandidates(payload)
+                .map((candidate) => extractVerificationCode(candidate))
+                .some((code) => isFreshPhoneCode(code));
+            if (hasCode) {
+              break;
+            }
+          }
+          const payload = payloads[payloads.length - 1]?.payload;
+          const text = payloads
+            .map((entry) => `${entry.phoneQueryCandidate}: ${describeNexSmsPayload(entry.payload) || 'PENDING'}`)
+            .join(' | ');
           lastResponse = text;
           pollCount += 1;
 
@@ -4684,34 +5171,40 @@
             });
           }
 
-          if (isNexSmsSuccessPayload(payload)) {
-            const premiumSmsItems = isPremiumActivation ? collectNexSmsListItems(payload) : [];
-            const directCode = isPremiumActivation
-              ? premiumSmsItems
-                .map((item) => extractVerificationCode(item?.code || item?.sms || item?.text || item?.message || ''))
-                .find(Boolean)
-              : extractVerificationCode(payload?.data?.code || payload?.data?.text || '');
-            if (directCode) {
+          const codePayloadEntry = payloads.find((entry) => (
+            isNexSmsSuccessPayload(entry.payload)
+            && collectNexSmsCodeCandidates(entry.payload)
+              .map((candidate) => extractVerificationCode(candidate))
+              .some((code) => isFreshPhoneCode(code))
+          ));
+          if (codePayloadEntry) {
+            const directCode = collectNexSmsCodeCandidates(codePayloadEntry.payload)
+              .map((candidate) => extractVerificationCode(candidate))
+              .find((code) => isFreshPhoneCode(code));
+            if (isFreshPhoneCode(directCode)) {
               return directCode;
             }
+          }
+
+          if (payloads.some((entry) => isNexSmsSuccessPayload(entry.payload))) {
             await emitWaitingForCode(text || 'PENDING');
             await sleepWithStop(intervalMs);
             continue;
           }
 
-          if (isNexSmsPendingMessage(payload)) {
+          if (payloads.some((entry) => isNexSmsPendingMessage(entry.payload))) {
             await emitWaitingForCode(text || 'PENDING');
             await sleepWithStop(intervalMs);
             continue;
           }
-          if (isNexSmsTerminalError(payload)) {
+          if (payloads.some((entry) => isNexSmsTerminalError(entry.payload))) {
             throw createPhoneSmsActionFailureError('NexSMS get sms messages', text || 'unknown terminal error');
           }
           await emitWaitingForCode(text || 'PENDING');
           await sleepWithStop(intervalMs);
         }
 
-        throw buildPhoneCodeTimeoutError(lastResponse);
+        throw buildPhoneCodeTimeoutError(lastResponse, 'NexSMS');
       }
 
       while (Date.now() - start < timeoutMs) {
@@ -4746,14 +5239,14 @@
             || extractVerificationCode(payload.call?.code)
           )
         );
-        if (v2Code) {
+        if (isFreshPhoneCode(v2Code)) {
           return v2Code;
         }
 
         const okMatch = text.match(/^STATUS_OK:(.+)$/i);
         if (okMatch) {
           const extractedCode = extractVerificationCode(okMatch[1] || '');
-          if (extractedCode) {
+          if (isFreshPhoneCode(extractedCode)) {
             return extractedCode;
           }
           await emitWaitingForCode(text || 'STATUS_OK');
@@ -4780,7 +5273,7 @@
         throw createHeroSmsActionFailureError(statusAction, text || 'empty response');
       }
 
-      throw buildPhoneCodeTimeoutError(lastResponse);
+      throw buildPhoneCodeTimeoutError(lastResponse, 'HeroSMS');
     }
 
     async function readPhonePageState(tabId, timeoutMs = 10000) {
@@ -4853,6 +5346,20 @@
             return {
               id: countryId,
               label: normalizeFiveSimCountryLabel(activation.countryLabel, countryId),
+            };
+          }
+        } else if (providerId === PHONE_SMS_PROVIDER_NEXSMS) {
+          const countryId = normalizeNexSmsCountryId(activation.countryId, -1);
+          if (countryId >= 0) {
+            const matched = candidates.find((entry) => normalizeNexSmsCountryId(entry.id, -1) === countryId);
+            if (matched) return matched;
+            const dialConfig = getNexSmsCountryDialConfig(countryId);
+            return {
+              id: countryId,
+              label: normalizeCountryLabel(
+                activation.countryLabel || dialConfig?.label,
+                dialConfig?.label || `Country #${countryId}`
+              ),
             };
           }
         } else {
@@ -5376,7 +5883,7 @@
         canUseSavedActivationForCurrentFlow
         && !Boolean(options?.skipPreferredActivation)
         && preferredActivation
-        && (provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_5SIM)
+        && (provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_5SIM || provider === PHONE_SMS_PROVIDER_NEXSMS)
         && preferredActivation.provider === provider
         && !blockedCountryIds.has(normalizeCountryKey(preferredActivation.countryId))
         && allowedCountryIds.has(normalizeCountryKey(preferredActivation.countryId))
@@ -5420,7 +5927,7 @@
       pushReusableCandidate(reusableActivation);
       reusableActivationPool.forEach((candidate) => pushReusableCandidate(candidate));
 
-      if (reuseEnabled && (provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_5SIM)) {
+      if (reuseEnabled && (provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_5SIM || provider === PHONE_SMS_PROVIDER_NEXSMS)) {
         for (const candidateActivation of reusableCandidates) {
           if (candidateActivation.provider !== provider) {
             continue;
@@ -5568,7 +6075,8 @@
       }
       const reusableProvider = normalizedActivation.provider;
       const canPersistReusableActivation = reusableProvider === PHONE_SMS_PROVIDER_HERO
-        || reusableProvider === PHONE_SMS_PROVIDER_5SIM;
+        || reusableProvider === PHONE_SMS_PROVIDER_5SIM
+        || reusableProvider === PHONE_SMS_PROVIDER_NEXSMS;
       if (!canPersistReusableActivation) {
         await clearReusableActivation();
         return;
@@ -5581,6 +6089,10 @@
       };
       delete nextReusableActivation.phoneCodeReceived;
       delete nextReusableActivation.phoneCodeReceivedAt;
+      if (reusableProvider !== PHONE_SMS_PROVIDER_NEXSMS) {
+        delete nextReusableActivation.lastPhoneCode;
+        delete nextReusableActivation.lastPhoneCodeAt;
+      }
       await upsertReusableActivationPool(nextReusableActivation, { state });
       if (!normalizePhoneSmsReuseEnabled(state)) {
         await clearReusableActivation();
@@ -5698,7 +6210,7 @@
       }
 
       const successfulUses = savedActivation.successfulUses + 1;
-      const maxUses = Math.max(1, Math.floor(Number(savedActivation.maxUses) || DEFAULT_PHONE_NUMBER_MAX_USES));
+      const maxUses = normalizePhoneNumberMaxUses(savedActivation.maxUses);
       if (successfulUses >= maxUses) {
         await clearFreeReusableActivation();
         await addLog(
@@ -5750,7 +6262,7 @@
         return;
       }
 
-      const maxUses = Math.max(1, Math.floor(Number(savedActivation.maxUses) || DEFAULT_PHONE_NUMBER_MAX_USES));
+      const maxUses = normalizePhoneNumberMaxUses(savedActivation.maxUses);
       const successfulUses = Math.min(maxUses, Math.max(1, normalizeUseCount(savedActivation.successfulUses)));
       if (successfulUses >= maxUses) {
         await clearFreeReusableActivation();
@@ -5781,15 +6293,21 @@
         : (normalizedActivation.provider === PHONE_SMS_PROVIDER_NEXSMS ? 'NexSMS' : 'HeroSMS');
       const usePageResend = normalizedActivation.provider !== PHONE_SMS_PROVIDER_5SIM;
 
-      const waitSeconds = normalizePhoneCodeWaitSeconds(state?.phoneCodeWaitSeconds);
-      const timeoutWindows = normalizePhoneCodeTimeoutWindows(state?.phoneCodeTimeoutWindows);
-      const pollIntervalSeconds = normalizePhoneCodePollIntervalSeconds(state?.phoneCodePollIntervalSeconds);
-      const pollMaxRounds = resolvePhoneCodePollMaxRoundsForWindow(
+      const {
         waitSeconds,
+        timeoutWindows,
         pollIntervalSeconds,
-        state?.phoneCodePollMaxRounds
-      );
+        pollMaxRounds,
+        upgradedLegacyTiming,
+      } = resolvePhoneCodeTimingConfig(state);
       let resendTriggeredForCurrentNumber = false;
+
+      if (upgradedLegacyTiming) {
+        await addLog(
+          `步骤 9：检测到旧版短信等待配置 60 秒 × 2 轮，已自动延长为 ${waitSeconds} 秒 × ${timeoutWindows} 轮，避免验证码延迟到达时过早换号。`,
+          'warn'
+        );
+      }
 
       for (let windowIndex = 1; windowIndex <= timeoutWindows; windowIndex += 1) {
         await setPhoneRuntimeCountdown(normalizedActivation, waitSeconds, windowIndex, timeoutWindows);
@@ -6049,14 +6567,21 @@
 
       return withPhoneVerificationLogContext({ step: visibleStep, stepKey }, async () => {
         const providerLabel = getPhoneSmsProviderLabel(normalizedActivation.provider);
-        const waitSeconds = normalizePhoneCodeWaitSeconds(state?.phoneCodeWaitSeconds);
-        const timeoutWindows = normalizePhoneCodeTimeoutWindows(state?.phoneCodeTimeoutWindows);
-        const pollIntervalSeconds = normalizePhoneCodePollIntervalSeconds(state?.phoneCodePollIntervalSeconds);
-        const pollMaxRounds = resolvePhoneCodePollMaxRoundsForWindow(
+        const {
           waitSeconds,
+          timeoutWindows,
           pollIntervalSeconds,
-          state?.phoneCodePollMaxRounds
-        );
+          pollMaxRounds,
+          upgradedLegacyTiming,
+        } = resolvePhoneCodeTimingConfig(state);
+
+        if (upgradedLegacyTiming) {
+          await addLog(
+            `步骤 ${visibleStep}：检测到旧版短信等待配置 60 秒 × 2 轮，已自动延长为 ${waitSeconds} 秒 × ${timeoutWindows} 轮，避免验证码延迟到达时过早结束当前号码。`,
+            'warn',
+            { step: visibleStep, stepKey }
+          );
+        }
 
         for (let windowIndex = 1; windowIndex <= timeoutWindows; windowIndex += 1) {
           await setPhoneRuntimeState({
@@ -6579,6 +7104,7 @@
       let preferredActivationExhausted = false;
       let preferReuseExistingActivationOnAddPhone = false;
       let addPhoneReentryWithSameActivation = 0;
+      let pendingReplacementFailure = null;
       const countrySmsFailureCounts = new Map();
       const countryPriceFloorByKey = new Map();
       const normalizeCountryFailureKey = (countryId, provider = activation?.provider || state?.phoneSmsProvider || '') => {
@@ -6777,7 +7303,10 @@
         return Array.from(countrySmsFailureCounts.entries())
           .filter(([countryKey, count]) => (
             Number(count) >= PHONE_SMS_FAILURE_SKIP_THRESHOLD
-            || !countryPriceFloorByKey.has(countryKey)
+            || (
+              activeProvider !== PHONE_SMS_PROVIDER_NEXSMS
+              && !countryPriceFloorByKey.has(countryKey)
+            )
           ))
           .map(([countryKey]) => splitCountryFailureKey(countryKey, activeProvider))
           .filter((entry) => entry.provider === activeProvider)
@@ -6811,6 +7340,9 @@
       const setCountryPriceFloorFromActivation = async (activationCandidate, reason = '') => {
         const normalizedActivation = normalizeActivation(activationCandidate);
         if (!normalizedActivation) {
+          return;
+        }
+        if (normalizedActivation.provider === PHONE_SMS_PROVIDER_NEXSMS) {
           return;
         }
         const countryKey = normalizeCountryFailureKey(
@@ -6860,6 +7392,18 @@
         );
       };
 
+      const discardFailedActivationBeforeFreshNumber = async (activationCandidate, reason = '') => {
+        const normalizedActivation = normalizeActivation(activationCandidate);
+        if (!normalizedActivation) {
+          return;
+        }
+        await discardPhoneActivationFromReuse(
+          `当前轮手机号验证失败（${formatStep9Reason(reason || 'unknown')}），下一次将直接获取新号码。`,
+          normalizedActivation,
+          await getState()
+        );
+      };
+
       const rotateActivationAfterAddPhoneFailure = async (failureReason, failureCode, submitState = {}) => {
         await markPreferredActivationExhausted(failureCode || failureReason);
         usedNumberReplacementAttempts += 1;
@@ -6870,6 +7414,7 @@
           `步骤 9：添加手机号失败后正在更换号码（${formatStep9Reason(failureReason)}，${usedNumberReplacementAttempts}/${maxNumberReplacementAttempts}）。`,
           'warn'
         );
+        await discardFailedActivationBeforeFreshNumber(activation, failureCode || failureReason || 'add_phone_rejected');
         if (shouldCancelActivation && activation) {
           await cancelPhoneActivation(state, activation);
         }
@@ -6935,14 +7480,22 @@
               if (activation) {
                 shouldCancelActivation = false;
               } else {
-                activation = await acquirePhoneActivation(state, {
-                  blockedCountryIds: getBlockedCountryIds(),
-                  countryPriceFloorByCountryId: getCountryPriceFloorById(),
-                  skipPreferredActivation: preferredActivationExhausted,
-                });
+                try {
+                  activation = await acquirePhoneActivation(state, {
+                    blockedCountryIds: getBlockedCountryIds(),
+                    countryPriceFloorByCountryId: getCountryPriceFloorById(),
+                    skipPreferredActivation: preferredActivationExhausted,
+                  });
+                } catch (acquireError) {
+                  if (pendingReplacementFailure) {
+                    throw buildPhoneReplacementAcquireFailureError(pendingReplacementFailure, acquireError);
+                  }
+                  throw acquireError;
+                }
                 shouldCancelActivation = true;
                 await persistCurrentActivation(activation);
               }
+              pendingReplacementFailure = null;
               addPhoneReentryWithSameActivation = 0;
             } else if (preferReuseExistingActivationOnAddPhone) {
               addPhoneReentryWithSameActivation += 1;
@@ -6960,6 +7513,11 @@
                     `自动白嫖复用号码 ${activation.phoneNumber} 反复返回添加手机号页。`
                   );
                 }
+                await discardPhoneActivationFromReuse(
+                  '目标站反复返回添加手机号页。',
+                  activation,
+                  await getState()
+                );
                 if (shouldCancelActivation && activation) {
                   await cancelPhoneActivation(state, activation);
                 }
@@ -6986,6 +7544,27 @@
               submitResult = await submitPhoneNumber(tabId, activation.phoneNumber, activation);
             } catch (submitError) {
               const submitErrorText = String(submitError?.message || submitError || 'unknown error');
+              if (
+                isPhoneMaxUsageExceededFlowError(submitError)
+                || isPhoneNumberUsedError(submitErrorText)
+              ) {
+                await discardPhoneActivationFromReuse(
+                  `目标站拒绝该号码（${submitErrorText}）。`,
+                  activation,
+                  await getState()
+                );
+                if (isFreeAutoReuseActivation(activation)) {
+                  await retireFreeReusableActivation(
+                    `自动白嫖复用号码 ${activation.phoneNumber} 被目标站拒绝。`
+                  );
+                }
+                await rotateActivationAfterAddPhoneFailure(
+                  submitErrorText,
+                  'phone_max_usage_exceeded',
+                  { url: pageState?.url || '' }
+                );
+                continue;
+              }
               if (isPhoneNumberDeliveryRefusedError(submitErrorText) || isRecoverableAddPhoneSubmitError(submitErrorText)) {
                 await rotateActivationAfterAddPhoneFailure(
                   submitErrorText,
@@ -7044,6 +7623,24 @@
                 );
                 continue;
               }
+              if (isPhoneVerificationRequestLimitError(addPhoneRejectText)) {
+                await discardPhoneActivationFromReuse(
+                  `目标站限制该号码继续请求手机验证（${addPhoneRejectText}）。`,
+                  activation,
+                  await getState()
+                );
+                if (isFreeAutoReuseActivation(activation)) {
+                  await retireFreeReusableActivation(
+                    `自动白嫖复用号码 ${activation.phoneNumber} 请求手机验证次数过多。`
+                  );
+                }
+                await rotateActivationAfterAddPhoneFailure(
+                  addPhoneRejectText,
+                  'phone_verification_request_limit',
+                  submitResult || {}
+                );
+                continue;
+              }
 
               await addLog(
                 `步骤 9：添加手机号页面拒绝当前号码，但未明确提示已使用（${addPhoneRejectText}），将用同一号码再试一次。`,
@@ -7065,13 +7662,23 @@
                 if (
                   isPhoneNumberUsedError(retryRejectText)
                   || isPhoneNumberDeliveryRefusedError(retryRejectText)
+                  || isPhoneVerificationRequestLimitError(retryRejectText)
                   || isRecoverableAddPhoneSubmitError(retryRejectText)
                 ) {
+                  if (isPhoneVerificationRequestLimitError(retryRejectText)) {
+                    await discardPhoneActivationFromReuse(
+                      `目标站限制该号码继续请求手机验证（${retryRejectText}）。`,
+                      activation,
+                      await getState()
+                    );
+                  }
                   await rotateActivationAfterAddPhoneFailure(
                     `add-phone keeps rejecting ${activation.phoneNumber} (${retryRejectText})`,
                     isPhoneNumberUsedError(retryRejectText)
                       ? 'phone_number_used'
-                      : (isPhoneNumberDeliveryRefusedError(retryRejectText) ? 'phone_delivery_refused' : 'add_phone_rejected'),
+                      : (isPhoneNumberDeliveryRefusedError(retryRejectText)
+                        ? 'phone_delivery_refused'
+                        : (isPhoneVerificationRequestLimitError(retryRejectText) ? 'phone_verification_request_limit' : 'add_phone_rejected')),
                     submitResult || {}
                   );
                   continue;
@@ -7122,7 +7729,7 @@
             await setPhoneRuntimeState({
               [PHONE_VERIFICATION_CODE_STATE_KEY]: String(codeResult.code || '').trim(),
             });
-            activation = markActivationPhoneCodeReceived(activation) || activation;
+            activation = markActivationPhoneCodeReceived(activation, codeResult.code) || activation;
             await persistCurrentActivation(activation);
             await setPhoneRuntimeState({
               [PHONE_VERIFICATION_CODE_STATE_KEY]: String(codeResult.code || '').trim(),
@@ -7264,6 +7871,12 @@
             throw new Error('手机号验证未完成。');
           }
 
+          pendingReplacementFailure = {
+            phoneNumber: activation?.phoneNumber || '',
+            reason: replaceReason || 'replace_number',
+          };
+          await discardFailedActivationBeforeFreshNumber(activation, replaceReason || 'replace_number');
+
           if (
             activation
             && (
@@ -7290,7 +7903,13 @@
               `自动白嫖复用号码 ${activation.phoneNumber} 在失败后被更换。`
             );
           }
-          if (isPhoneNumberUsedError(replaceReason)) {
+          if (
+            isPhoneNumberUsedError(replaceReason)
+            || replaceReason === 'phone_max_usage_exceeded'
+            || replaceReason === 'phone_verification_request_limit'
+            || replaceReason === 'resend_phone_banned'
+            || replaceReason === 'activation_not_found'
+          ) {
             await discardPhoneActivationFromReuse(
               `目标站拒绝该号码（${replaceReason}）。`,
               activation,

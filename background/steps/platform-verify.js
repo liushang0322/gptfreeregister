@@ -14,6 +14,7 @@
       getTabId,
       isLocalhostOAuthCallbackUrl,
       isTabAlive,
+      markCurrentRegistrationAccountUsed = null,
       normalizeHotmailLocalBaseUrl = (value) => String(value || '').trim(),
       normalizeCodex2ApiUrl,
       normalizeSub2ApiUrl,
@@ -533,6 +534,12 @@
         const verifiedStatus = normalizeString(state?.verifiedStatus)
           || `SUB2API 账号 JSON 已在保存 Session JSON 步骤导出并导入：${state.sub2apiAccountJsonFilePath}`;
         await addStepLog(platformVerifyStep, verifiedStatus, 'ok');
+        if (typeof markCurrentRegistrationAccountUsed === 'function') {
+          await markCurrentRegistrationAccountUsed(state, {
+            logPrefix: 'SUB2API 导入完成',
+            level: 'ok',
+          });
+        }
         await completeNodeFromBackground(state?.nodeId || 'platform-verify', {
           verifiedStatus,
           sub2apiAccountJsonFilePath: state.sub2apiAccountJsonFilePath,
@@ -602,6 +609,13 @@
       const verifiedStatus = `${importResult.verifiedStatus || 'SUB2API 账号 JSON 自动导入完成'}；导出文件：${filePath}`;
       await addStepLog(platformVerifyStep, verifiedStatus, 'ok');
 
+      if (typeof markCurrentRegistrationAccountUsed === 'function') {
+        await markCurrentRegistrationAccountUsed(state, {
+          logPrefix: 'SUB2API 导入完成',
+          level: 'ok',
+        });
+      }
+
       await completeNodeFromBackground(state?.nodeId || 'platform-verify', {
         localhostUrl: callback.url,
         verifiedStatus,
@@ -662,6 +676,12 @@
             logOptions: { step: visibleStep, stepKey: 'platform-verify' },
             timeoutMs: SUB2API_STEP9_RESPONSE_TIMEOUT_MS,
           });
+          if (typeof markCurrentRegistrationAccountUsed === 'function') {
+            await markCurrentRegistrationAccountUsed(state, {
+              logPrefix: 'SUB2API 导入完成',
+              level: 'ok',
+            });
+          }
           await completeNodeFromBackground(state?.nodeId || 'platform-verify', result);
           return;
         } catch (error) {

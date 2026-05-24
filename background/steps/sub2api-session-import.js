@@ -11,7 +11,9 @@
       completeNodeFromBackground,
       ensureContentScriptReadyOnTabUntilStopped,
       getTabId,
+      getState = async () => ({}),
       isTabAlive,
+      markCurrentRegistrationAccountUsed = null,
       normalizeSub2ApiUrl = (value) => value,
       registerTab,
       sendTabMessageUntilStopped,
@@ -264,6 +266,14 @@
         timeoutMs: 120000,
         importTimeoutMs: 120000,
       });
+
+      if (typeof markCurrentRegistrationAccountUsed === 'function') {
+        const latestState = await getState();
+        await markCurrentRegistrationAccountUsed(latestState, {
+          logPrefix: 'SUB2API 导入完成',
+          level: 'ok',
+        });
+      }
 
       await completeNodeFromBackground(state?.nodeId || 'sub2api-session-import', result);
     }

@@ -22,7 +22,7 @@
     const PHONE_RESEND_THROTTLED_ERROR_PREFIX = 'PHONE_RESEND_THROTTLED::';
     const PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX = 'PHONE_RESEND_BANNED_NUMBER::';
     const PHONE_RESEND_SERVER_ERROR_PREFIX = 'PHONE_RESEND_SERVER_ERROR::';
-    const PHONE_MAX_USAGE_EXCEEDED_PATTERN = /phone_max_usage_exceeded/i;
+    const PHONE_MAX_USAGE_EXCEEDED_PATTERN = /phone_max_usage_exceeded|already\s+linked\s+to\s+the\s+maximum\s+number\s+of\s+accounts|(?:电话|手机)号码.*(?:关联|绑定).*最多账户|(?:电话|手机)号码.*最多.*账户|可关联的最多账户/i;
     const PHONE_ROUTE_405_RECOVERY_FAILED_ERROR_PREFIX = 'PHONE_ROUTE_405_RECOVERY_FAILED::';
     const PHONE_ROUTE_405_RECOVERY_COOLDOWN_MS = 6000;
     const PHONE_RESEND_ROUTE_405_MAX_RECOVERIES = 2;
@@ -174,12 +174,23 @@
     function getCountryButtonText() {
       const form = getAddPhoneForm();
       if (!form) return '';
-      const button = form.querySelector('button[aria-haspopup="listbox"]');
+      const button = getCountryButton() || form.querySelector('button[aria-haspopup="listbox"]');
       if (!button) return '';
       const valueNode = button.querySelector('.react-aria-SelectValue');
       return String(valueNode?.textContent || button.textContent || '')
         .replace(/\s+/g, ' ')
         .trim();
+    }
+
+    function getCountryButton() {
+      const form = getAddPhoneForm();
+      if (!form) return null;
+      const buttons = Array.from(form.querySelectorAll(
+        'button[aria-haspopup="listbox"], [role="button"][aria-haspopup="listbox"], [role="combobox"][aria-haspopup="listbox"], button[aria-expanded]'
+      ));
+      return buttons.find((button) => isVisibleElement(button) && extractDialCodeFromText(getActionText(button)))
+        || buttons.find((button) => isVisibleElement(button))
+        || null;
     }
 
     function getDisplayedDialCode() {
@@ -192,6 +203,11 @@
       const fieldRoot = phoneInput?.closest('fieldset') || phoneInput?.closest('form') || getAddPhoneForm();
       if (!fieldRoot) {
         return '';
+      }
+
+      const fieldRootDialCode = extractDialCodeFromText(String(fieldRoot.textContent || '').replace(/\s+/g, ' ').trim());
+      if (fieldRootDialCode) {
+        return fieldRootDialCode;
       }
 
       const visibleSpan = Array.from(fieldRoot.querySelectorAll('span'))
@@ -249,6 +265,69 @@
       return `+${normalizedDialCode}${digits}`;
     }
 
+    function getPhoneInputRenderedValue(phoneInput) {
+      return String(phoneInput?.value ?? phoneInput?.getAttribute?.('value') ?? '').trim();
+    }
+
+    function isPhoneInputValueVerified(actualValue, expectedValue, options = {}) {
+      const actualDigits = normalizePhoneDigits(actualValue);
+      const expectedDigits = normalizePhoneDigits(expectedValue);
+      if (!actualDigits || !expectedDigits) {
+        return false;
+      }
+      if (actualDigits === expectedDigits) {
+        return true;
+      }
+      const dialDigits = normalizePhoneDigits(options.dialCode);
+      const fullDigits = normalizePhoneDigits(options.phoneNumber);
+      if (fullDigits && actualDigits === fullDigits) {
+        return true;
+      }
+      return Boolean(dialDigits && actualDigits === `${dialDigits}${expectedDigits}`);
+    }
+
+    async function waitForPhoneInputValue(phoneInput, expectedValue, options = {}) {
+      const startedAt = Date.now();
+      const timeout = Math.max(500, Number(options.timeout) || 1800);
+      const pollInterval = Math.max(50, Number(options.pollInterval) || 100);
+      let currentInput = phoneInput;
+      while (Date.now() - startedAt < timeout) {
+        throwIfStopped();
+        currentInput = getPhoneInput() || currentInput;
+        if (isPhoneInputValueVerified(getPhoneInputRenderedValue(currentInput), expectedValue, options)) {
+          return {
+            ok: true,
+            input: currentInput,
+            value: getPhoneInputRenderedValue(currentInput),
+          };
+        }
+        await sleep(pollInterval);
+      }
+      currentInput = getPhoneInput() || currentInput;
+      return {
+        ok: false,
+        input: currentInput,
+        value: getPhoneInputRenderedValue(currentInput),
+      };
+    }
+
+    function setPhoneHiddenValue(input, value) {
+      const normalizedValue = String(value || '');
+      try {
+        const nativeInputValueSetter = typeof window !== 'undefined'
+          ? Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+          : null;
+        if (nativeInputValueSetter) {
+          nativeInputValueSetter.call(input, normalizedValue);
+        } else {
+          input.value = normalizedValue;
+        }
+      } catch {
+        input.value = normalizedValue;
+      }
+      dispatchInputEvents(input);
+    }
+
     function getAddPhoneForm() {
       return document.querySelector('form[action*="/add-phone" i]');
     }
@@ -269,7 +348,15 @@
     function getHiddenPhoneNumberInput() {
       const form = getAddPhoneForm();
       if (!form) return null;
-      return form.querySelector('input[name="phoneNumber"]');
+      const phoneInput = getPhoneInput();
+      const candidates = Array.from(form.querySelectorAll(
+        'input[name="phoneNumber"], input[name="phone"], input[type="hidden"][id*="phone" i]'
+      ));
+      return candidates.find((input) => {
+        if (!input || input === phoneInput) return false;
+        const type = String(input.getAttribute?.('type') || input.type || '').trim().toLowerCase();
+        return type === 'hidden' || !isVisibleElement(input);
+      }) || null;
     }
 
     function getCountrySelect() {
@@ -348,7 +435,85 @@
       return bestMatch;
     }
 
-    async function trySelectCountryOption(select, targetOption) {
+    function resolveTargetDialCode(options = {}, targetOption = null) {
+      const optionDialCode = extractDialCodeFromText(getOptionLabel(targetOption));
+      if (optionDialCode) {
+        return optionDialCode;
+      }
+      if (typeof phoneCountryUtils.resolveDialCodeFromPhoneNumber === 'function') {
+        return phoneCountryUtils.resolveDialCodeFromPhoneNumber(options.phoneNumber, [
+          getOptionLabel(targetOption),
+          options.countryLabel,
+        ]);
+      }
+      const digits = normalizePhoneDigits(options.phoneNumber);
+      const knownDialCodes = [
+        '1246', '1264', '1268', '1284', '1340', '1345', '1441', '1473', '1649', '1664', '1670', '1671', '1684',
+        '1721', '1758', '1767', '1784', '1809', '1829', '1849', '1868', '1869', '1876',
+        '971', '962', '886', '880', '856', '855', '852', '853', '673', '672', '670', '599', '598', '597', '596',
+        '595', '594', '593', '592', '591', '590', '509', '508', '507', '506', '505', '504', '503', '502', '501',
+        '423', '421', '420', '389', '387', '386', '385', '383', '382', '381', '380', '379', '378', '377', '376',
+        '375', '374', '373', '372', '371', '370', '359', '358', '357', '356', '355', '354', '353', '352', '351',
+        '350', '299', '298', '297', '291', '290', '269', '268', '267', '266', '265', '264', '263', '262', '261',
+        '260', '258', '257', '256', '255', '254', '253', '252', '251', '250', '249', '248', '247', '246', '245',
+        '244', '243', '242', '241', '240', '239', '238', '237', '236', '235', '234', '233', '232', '231', '230',
+        '229', '228', '227', '226', '225', '224', '223', '222', '221', '220', '218', '216', '213', '212', '211',
+        '98', '95', '94', '93', '92', '91', '90', '89', '88', '86', '84', '82', '81', '66', '65', '64', '63',
+        '62', '61', '60', '58', '57', '56', '55', '54', '53', '52', '51', '49', '48', '47', '46', '45', '44',
+        '43', '41', '40', '39', '36', '34', '33', '32', '31', '30', '27', '20', '7', '1',
+      ];
+      return knownDialCodes.find((code) => digits.startsWith(code) && digits.length > code.length) || '';
+    }
+
+    function getCountryTargetLabels(targetOption, options = {}) {
+      const labels = new Set();
+      const pushAliases = (value) => {
+        if (typeof phoneCountryUtils.getCountryLabelAliases === 'function') {
+          phoneCountryUtils.getCountryLabelAliases(value).forEach((alias) => {
+            if (alias) labels.add(alias);
+          });
+          return;
+        }
+        const normalized = normalizeCountryLabel(value);
+        if (normalized) labels.add(normalized);
+      };
+      pushAliases(options.countryLabel);
+      getCountryOptionMatchLabels(targetOption).forEach(pushAliases);
+      return Array.from(labels);
+    }
+
+    function doesCountryTextMatchTarget(text, targetOption, options = {}) {
+      const normalizedText = normalizeCountryLabel(text);
+      const labels = getCountryTargetLabels(targetOption, options);
+      if (normalizedText && labels.some((label) => (
+        normalizedText === label
+        || (label.length > 1 && normalizedText.includes(label))
+        || (normalizedText.length > 2 && label.includes(normalizedText))
+      ))) {
+        return true;
+      }
+      const targetDialCode = resolveTargetDialCode(options, targetOption);
+      return Boolean(targetDialCode && normalizePhoneDigits(extractDialCodeFromText(text)) === normalizePhoneDigits(targetDialCode));
+    }
+
+    function isCountrySelectionSynced(targetOption, options = {}) {
+      const targetDialCode = normalizePhoneDigits(resolveTargetDialCode(options, targetOption));
+      const displayedText = getCountryButtonText();
+      const displayedDialCode = normalizePhoneDigits(extractDialCodeFromText(displayedText) || getDisplayedDialCode());
+      if (targetDialCode && displayedDialCode) {
+        return displayedDialCode === targetDialCode;
+      }
+      if (displayedText && doesCountryTextMatchTarget(displayedText, targetOption, options)) {
+        return true;
+      }
+      if (targetDialCode) {
+        return false;
+      }
+      const selectedOption = getSelectedCountryOption();
+      return Boolean(selectedOption && targetOption && isSameCountryOption(selectedOption, targetOption));
+    }
+
+    async function trySelectCountryOption(select, targetOption, options = {}) {
       if (!select || !targetOption) {
         return false;
       }
@@ -357,34 +522,208 @@
         await performOperationWithDelay({ stepKey: 'phone-auth', kind: 'select', label: 'phone-country-select' }, async () => {
           dispatchInputEvents(select);
         });
-        return true;
+        await sleep(120);
+        return isCountrySelectionSynced(targetOption, options);
       }
       await performOperationWithDelay({ stepKey: 'phone-auth', kind: 'select', label: 'phone-country-select' }, async () => {
         select.value = String(targetOption.value || '');
+        targetOption.selected = true;
         dispatchInputEvents(select);
       });
       await sleep(250);
-      const nextSelectedOption = getSelectedCountryOption();
-      return Boolean(nextSelectedOption && isSameCountryOption(nextSelectedOption, targetOption));
+      return isCountrySelectionSynced(targetOption, options);
+    }
+
+    function getVisibleCountryListboxOptions() {
+      const seen = new Set();
+      return Array.from(document.querySelectorAll('[role="listbox"] [role="option"], [role="option"]'))
+        .filter((option) => {
+          if (!option || seen.has(option)) {
+            return false;
+          }
+          seen.add(option);
+          return isVisibleElement(option);
+        });
+    }
+
+    function findCountryListboxOption(targetOption, options = {}) {
+      const candidates = getVisibleCountryListboxOptions();
+      const byLabel = candidates.find((option) => doesCountryTextMatchTarget(getActionText(option), targetOption, options));
+      if (byLabel) {
+        return byLabel;
+      }
+
+      if (typeof phoneCountryUtils.findElementByDialCode === 'function') {
+        const byPhoneNumber = phoneCountryUtils.findElementByDialCode(candidates, options.phoneNumber, {
+          getText: getActionText,
+        });
+        if (byPhoneNumber) {
+          return byPhoneNumber;
+        }
+      }
+
+      const targetDialCode = normalizePhoneDigits(resolveTargetDialCode(options, targetOption));
+      if (targetDialCode) {
+        return candidates.find((option) => normalizePhoneDigits(extractDialCodeFromText(getActionText(option))) === targetDialCode) || null;
+      }
+      return null;
+    }
+
+    async function trySelectCountryListboxOption(targetOption, options = {}) {
+      const button = getCountryButton();
+      if (!button) {
+        return false;
+      }
+
+      const dispatchListboxScroll = (element) => {
+        if (!element || typeof element.dispatchEvent !== 'function') {
+          return;
+        }
+        element.dispatchEvent(new Event('scroll', { bubbles: true }));
+      };
+      const getScrollableTargets = () => {
+        const seen = new Set();
+        const targets = [];
+        const pushTarget = (element) => {
+          if (!element || seen.has(element)) {
+            return;
+          }
+          seen.add(element);
+          const scrollHeight = Number(element.scrollHeight) || 0;
+          const clientHeight = Number(element.clientHeight) || 0;
+          if (scrollHeight > clientHeight + 2) {
+            targets.push(element);
+          }
+        };
+        getVisibleCountryListboxOptions().forEach((option) => {
+          let current = option.parentElement || null;
+          let depth = 0;
+          while (current && depth < 6) {
+            pushTarget(current);
+            if (current === document.body || current === document.documentElement) {
+              break;
+            }
+            current = current.parentElement || null;
+            depth += 1;
+          }
+        });
+        Array.from(document.querySelectorAll('[role="listbox"]'))
+          .filter((listbox) => isVisibleElement(listbox))
+          .forEach(pushTarget);
+        return targets;
+      };
+      const resetListboxScroll = () => {
+        getScrollableTargets().forEach((target) => {
+          if ((Number(target.scrollTop) || 0) > 0) {
+            target.scrollTop = 0;
+            dispatchListboxScroll(target);
+          }
+        });
+      };
+      const scrollListboxDown = () => {
+        let scrolled = false;
+        getScrollableTargets().forEach((target) => {
+          const before = Number(target.scrollTop) || 0;
+          const maxScrollTop = Math.max(0, (Number(target.scrollHeight) || 0) - (Number(target.clientHeight) || 0));
+          if (maxScrollTop <= before + 1) {
+            return;
+          }
+          const step = Math.max(360, Math.floor((Number(target.clientHeight) || 0) * 0.85));
+          target.scrollTop = Math.min(maxScrollTop, before + step);
+          dispatchListboxScroll(target);
+          scrolled = true;
+        });
+        return scrolled;
+      };
+
+      await performOperationWithDelay({ stepKey: 'phone-auth', kind: 'click', label: 'open-phone-country-listbox' }, async () => {
+        simulateClick(button);
+      });
+      await sleep(200);
+      resetListboxScroll();
+
+      const start = Date.now();
+      let reachedListEndAt = 0;
+      while (Date.now() - start < 8000) {
+        throwIfStopped();
+        const option = findCountryListboxOption(targetOption, options);
+        if (option) {
+          await performOperationWithDelay({ stepKey: 'phone-auth', kind: 'select', label: 'phone-country-listbox-option' }, async () => {
+            simulateClick(option);
+          });
+          await sleep(450);
+          if (isCountrySelectionSynced(targetOption, options)) {
+            return true;
+          }
+        }
+
+        if (!scrollListboxDown()) {
+          reachedListEndAt += 1;
+          if (reachedListEndAt >= 6) {
+            break;
+          }
+          await sleep(150);
+          continue;
+        }
+        reachedListEndAt = 0;
+        await sleep(220);
+      }
+
+      return false;
     }
 
     async function ensureCountrySelected(countryLabel, phoneNumber = '') {
       const select = getCountrySelect();
-      if (!select) {
-        return false;
+      const options = { countryLabel, phoneNumber };
+      const targetDialCode = normalizePhoneDigits(resolveTargetDialCode(options));
+      const hasCountryControl = Boolean(select || getCountryButton());
+      if (!hasCountryControl) {
+        return {
+          matched: false,
+          targetDialCode,
+          displayedDialCode: normalizePhoneDigits(getDisplayedDialCode()),
+          currentCountryText: getCountryButtonText(),
+          selectedOption: null,
+        };
       }
 
       const byLabel = findCountryOptionByLabel(countryLabel);
-      if (await trySelectCountryOption(select, byLabel)) {
-        return true;
-      }
-
       const byPhoneNumber = findCountryOptionByPhoneNumber(phoneNumber);
-      if (await trySelectCountryOption(select, byPhoneNumber)) {
-        return true;
+      const targets = [byLabel, byPhoneNumber, null].filter((target, index, list) => (
+        index === list.findIndex((item) => (
+          (!item && !target)
+          || (item && target && isSameCountryOption(item, target))
+        ))
+      ));
+
+      for (const targetOption of targets) {
+        if (await trySelectCountryOption(select, targetOption, options)) {
+          return {
+            matched: true,
+            targetDialCode,
+            displayedDialCode: normalizePhoneDigits(getDisplayedDialCode()),
+            currentCountryText: getCountryButtonText(),
+            selectedOption: getSelectedCountryOption(),
+          };
+        }
+        if (await trySelectCountryListboxOption(targetOption, options)) {
+          return {
+            matched: true,
+            targetDialCode,
+            displayedDialCode: normalizePhoneDigits(getDisplayedDialCode()),
+            currentCountryText: getCountryButtonText(),
+            selectedOption: getSelectedCountryOption(),
+          };
+        }
       }
 
-      return Boolean(getSelectedCountryOption());
+      return {
+        matched: false,
+        targetDialCode,
+        displayedDialCode: normalizePhoneDigits(getDisplayedDialCode()),
+        currentCountryText: getCountryButtonText(),
+        selectedOption: getSelectedCountryOption(),
+      };
     }
 
     function getAddPhoneSubmitButton() {
@@ -761,16 +1100,29 @@
 
     async function submitPhoneNumber(payload = {}) {
       const countryLabel = String(payload.countryLabel || '').trim();
-      const isExplicitInternational = isExplicitInternationalPhoneInput(payload.phoneNumber);
       await waitForAddPhoneReady();
-      const countrySelected = await ensureCountrySelected(countryLabel, payload.phoneNumber);
-      if (!countrySelected) {
-        throw new Error(`Failed to select "${countryLabel || 'target country'}" on the add-phone page.`);
+      const countrySelection = await ensureCountrySelected(countryLabel, payload.phoneNumber);
+      if (!countrySelection.matched) {
+        const targetDialCode = countrySelection.targetDialCode || resolveTargetDialCode({ countryLabel, phoneNumber: payload.phoneNumber });
+        const currentText = countrySelection.currentCountryText || getCountryButtonText() || 'unknown';
+        const displayedDialCode = countrySelection.displayedDialCode || normalizePhoneDigits(getDisplayedDialCode());
+        throw new Error(
+          `Failed to select "${countryLabel || 'target country'}" on the add-phone page; `
+          + `target dial code +${targetDialCode || 'unknown'}, current country "${currentText}", displayed dial code +${displayedDialCode || 'unknown'}.`
+        );
       }
 
-      const dialCode = getDisplayedDialCode();
-      if (!dialCode && !isExplicitInternational) {
+      const targetDialCode = countrySelection.targetDialCode || resolveTargetDialCode({ countryLabel, phoneNumber: payload.phoneNumber }, countrySelection.selectedOption);
+      const displayedDialCode = normalizePhoneDigits(getDisplayedDialCode());
+      const dialCode = normalizePhoneDigits(targetDialCode || displayedDialCode);
+      if (!dialCode) {
         throw new Error(`Could not determine the dial code for "${countryLabel}" on the add-phone page.`);
+      }
+      if (targetDialCode && displayedDialCode && normalizePhoneDigits(targetDialCode) !== displayedDialCode) {
+        throw new Error(
+          `Add-phone country dial code mismatch: target +${normalizePhoneDigits(targetDialCode)}, displayed +${displayedDialCode}. `
+          + `Will not submit ${payload.phoneNumber}.`
+        );
       }
 
       const phoneNumber = toE164PhoneNumber(payload.phoneNumber, dialCode);
@@ -797,11 +1149,28 @@
       await performOperationWithDelay({ stepKey: 'phone-auth', kind: 'fill', label: 'phone-number' }, async () => {
         fillInput(phoneInput, nationalPhoneNumber);
       });
-      if (hiddenPhoneNumberInput) {
+      const verifiedInput = await waitForPhoneInputValue(phoneInput, nationalPhoneNumber, {
+        phoneNumber,
+        dialCode,
+        timeout: 1800,
+        pollInterval: 100,
+      });
+      if (!verifiedInput.ok) {
+        throw new Error(
+          `Add-phone phone input verification failed: full number ${phoneNumber}, dial code +${dialCode}, `
+          + `expected local number ${nationalPhoneNumber}, actual input ${normalizePhoneDigits(verifiedInput.value) || 'empty'}.`
+        );
+      }
+      const activeHiddenPhoneNumberInput = getHiddenPhoneNumberInput() || hiddenPhoneNumberInput;
+      if (activeHiddenPhoneNumberInput) {
         await performOperationWithDelay({ stepKey: 'phone-auth', kind: 'hidden-sync', label: 'phone-number-hidden-sync' }, async () => {
-          hiddenPhoneNumberInput.value = phoneNumber;
-          dispatchInputEvents(hiddenPhoneNumberInput);
+          setPhoneHiddenValue(activeHiddenPhoneNumberInput, phoneNumber);
         });
+        if (normalizePhoneDigits(activeHiddenPhoneNumberInput.value) !== normalizePhoneDigits(phoneNumber)) {
+          throw new Error(
+            `Add-phone hidden phone field sync failed: expected ${phoneNumber}, actual ${activeHiddenPhoneNumberInput.value || 'empty'}.`
+          );
+        }
       }
       await sleep(250);
       await performOperationWithDelay({ stepKey: 'phone-auth', kind: 'submit', label: 'phone-number-submit' }, async () => {

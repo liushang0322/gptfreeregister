@@ -14,6 +14,11 @@ function getOperationDelayRunner() {
     : async (_metadata, operation) => operation();
 }
 
+async function performOperationWithDelay(metadata, operation) {
+  const runner = getOperationDelayRunner();
+  return runner(metadata, operation);
+}
+
 if (document.documentElement.getAttribute(SIGNUP_PAGE_LISTENER_SENTINEL) !== '1') {
   document.documentElement.setAttribute(SIGNUP_PAGE_LISTENER_SENTINEL, '1');
 
