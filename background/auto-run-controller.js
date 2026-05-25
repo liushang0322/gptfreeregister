@@ -308,6 +308,12 @@
       return /步骤\s*2[：:].*检测到当前停留在已登录\s*ChatGPT\s*首页.*已阻止自动跳过步骤\s*3\/4\/5|当前页面没有可用的注册入口，也不在邮箱\/密码页/i.test(message);
     }
 
+    function isSignupIdentitySubmitNodeFailure(errorLike = null, state = {}) {
+      const failedNode = inferRecordNodeFromError(errorLike, state)
+        || inferRecordNodeFromState(state, ['failed', 'running']);
+      return failedNode === 'submit-signup-email';
+    }
+
     async function logAutoRunFinalSummary(totalRuns, roundSummaries = []) {
       const summaries = buildAutoRunRoundSummaries(totalRuns, roundSummaries);
       const successRounds = summaries.filter((item) => item.status === 'success');
@@ -545,7 +551,7 @@
         const currentRoundState = await getState();
         const keepSameEmailUntilAddPhone = autoRunSkipFailures && shouldKeepCustomMailProviderPoolEmail(currentRoundState);
         const maxAttemptsForRound = autoRunSkipFailures
-          ? (keepSameEmailUntilAddPhone ? Number.MAX_SAFE_INTEGER : AUTO_RUN_MAX_RETRIES_PER_ROUND + 1)
+          ? AUTO_RUN_MAX_RETRIES_PER_ROUND + 1
           : Math.max(1, attemptRun);
 
         while (attemptRun <= maxAttemptsForRound) {
@@ -789,12 +795,16 @@
             const blockedByStep4Route405 = typeof isStep4Route405RecoveryLimitFailure === 'function'
               && isStep4Route405RecoveryLimitFailure(err);
             const blockedBySignupEntry = isSignupEntryBlockedFailure(err);
+            const latestErrorState = await getState();
+            const blockedBySignupIdentitySubmit = Number(totalRuns) > 1
+              && isSignupIdentitySubmitNodeFailure(err, latestErrorState);
             const canRetry = !blockedByAddPhone
               && !blockedByPhoneNoSupply
               && !blockedByPlusNonFreeTrial
               && !blockedByGpcTaskEnded
               && !blockedBySignupUserAlreadyExists
               && !blockedBySignupEntry
+              && !blockedBySignupIdentitySubmit
               && autoRunSkipFailures
               && attemptRun < maxAttemptsForRound;
 
@@ -1035,6 +1045,25 @@
                 targetRun < totalRuns
                   ? `第 ${targetRun}/${totalRuns} 轮注册入口状态异常，本轮记为失败并继续下一轮。`
                   : `第 ${targetRun}/${totalRuns} 轮注册入口状态异常，已无后续轮次，本次自动运行结束。`,
+                'warn'
+              );
+              forceFreshTabsNextRun = true;
+              break;
+            }
+
+            if (blockedBySignupIdentitySubmit) {
+              roundSummary.status = 'failed';
+              roundSummary.finalFailureReason = reason;
+              await setState({
+                autoRunRoundSummaries: serializeAutoRunRoundSummaries(totalRuns, roundSummaries),
+              });
+              await appendRoundRecordIfNeeded('failed', reason, err);
+              cancelPendingCommands('当前轮因注册并输入邮箱节点失败已终止。');
+              await broadcastStopToContentScripts();
+              await addLog(
+                targetRun < totalRuns
+                  ? `第 ${targetRun}/${totalRuns} 轮注册并输入邮箱失败，本轮记为失败并继续下一轮。`
+                  : `第 ${targetRun}/${totalRuns} 轮注册并输入邮箱失败，已无后续轮次，本次自动运行结束。`,
                 'warn'
               );
               forceFreshTabsNextRun = true;
