@@ -2044,7 +2044,7 @@
 
     function isAuthContentScriptUnreachableError(error) {
       const message = String(error?.message || error || '').trim();
-      return /Receiving end does not exist|Could not establish connection|Frame with ID \d+ is showing error page|等待认证页状态检查超时/i.test(message);
+      return /Receiving end does not exist|Could not establish connection|Frame with ID \d+ is showing error page|等待认证页状态检查超时|内容脚本\s+\d+(?:\.\d+)?\s*秒内未响应|did not respond in \d+s/i.test(message);
     }
 
     function buildPhoneRestartStep7Error(phoneNumber = '') {
@@ -3899,15 +3899,36 @@
         return null;
       }
       const data = payload.data || {};
+      const unwrapPhoneCandidate = (value) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          return value;
+        }
+        return value.phoneNumber
+          || value.phone
+          || value.tel
+          || value.number
+          || value.mobile
+          || value.msisdn
+          || value.value
+          || value.raw
+          || '';
+      };
       const phoneCandidates = Array.isArray(data.phoneNumbers)
-        ? data.phoneNumbers
-        : (Array.isArray(data.numbers) ? data.numbers : []);
+        ? data.phoneNumbers.map(unwrapPhoneCandidate)
+        : (Array.isArray(data.numbers) ? data.numbers.map(unwrapPhoneCandidate) : []);
       const phoneNumber = String(
         data.phoneNumber
         || data.phone
         || data.tel
         || data.number
         || data.mobile
+        || data.msisdn
+        || data.value
+        || data.rawPhoneNumber
+        || data.raw_phone_number
+        || data.phone_number
+        || data.telNumber
+        || data.phoneNum
         || phoneCandidates[0]
         || fallback.phoneNumber
         || ''
@@ -4182,6 +4203,10 @@
                 serviceCode: config.serviceCode,
               });
               if (!activation) {
+                await addLog(
+                  `步骤 9：NexSMS ${countryLabel} 下单成功但未解析到手机号。price=${price}；payload=${describeNexSmsPayload(payload) || JSON.stringify(payload)}`,
+                  'error'
+                );
                 lastError = new Error('NexSMS 购买成功，但未返回手机号。');
                 continue;
               }
@@ -4203,6 +4228,9 @@
           const fallbackReason = purchaseNoNumbersByPrice.length
             ? `尝试价格 ${purchaseNoNumbersByPrice.join('；')} 均无可用号码`
             : (describeNexSmsPayload(pricePlan.rawPayload) || '接口成功但未解析到可用价格/库存档位');
+          if (purchaseNoNumbersByPrice.length) {
+            await addLog(`步骤 9：NexSMS ${countryLabel} 下单结果：${fallbackReason}`, 'warn');
+          }
           noNumbersByCountry.push(`${countryLabel}: ${fallbackReason}`);
           retryableNoNumberCountries.push(countryLabel);
         }
@@ -4226,13 +4254,13 @@
         break;
       }
 
+      if (finalLastError) {
+        throw finalLastError;
+      }
       if (finalNoNumbersByCountry.length) {
         throw new Error(
           `NexSMS 已尝试 ${countryCandidates.length} 个候选国家，均无可用号码：${finalNoNumbersByCountry.join(' | ')}。`
         );
-      }
-      if (finalLastError) {
-        throw finalLastError;
       }
       throw new Error('NexSMS 获取手机号失败。');
     }
@@ -5397,7 +5425,7 @@
       const timeoutMs = typeof getOAuthFlowStepTimeoutMs === 'function'
         ? await getOAuthFlowStepTimeoutMs(30000, { step: visibleStep, actionLabel: '提交添加手机号' })
         : 30000;
-      const result = await sendToContentScriptResilient('signup-page', {
+      const request = {
         type: 'SUBMIT_PHONE_NUMBER',
         source: 'background',
         payload: {
@@ -5405,14 +5433,37 @@
           countryId: countryConfig.id,
           countryLabel: countryConfig.label,
         },
-      }, {
-        timeoutMs,
-        responseTimeoutMs: timeoutMs,
-        retryDelayMs: 600,
-        logMessage: '步骤 9：等待添加手机号页面就绪...',
-        logStep: visibleStep,
-        logStepKey: 'phone-verification',
-      });
+      };
+      let result;
+      try {
+        result = await sendToContentScriptResilient('signup-page', request, {
+          timeoutMs,
+          responseTimeoutMs: timeoutMs,
+          retryDelayMs: 600,
+          logMessage: '步骤 9：等待添加手机号页面就绪...',
+          logStep: visibleStep,
+          logStepKey: 'phone-verification',
+        });
+      } catch (error) {
+        if (!isAuthContentScriptUnreachableError(error)) {
+          throw error;
+        }
+        await addLog(`步骤 9：提交手机号前认证页脚本失联，正在重连后重试。${error.message}`, 'warn');
+        await ensureStep8SignupPageReady(tabId, {
+          timeoutMs: Math.min(15000, timeoutMs),
+          visibleStep,
+          logStepKey: 'phone-verification',
+          logMessage: '步骤 9：认证页脚本失联，正在重新连接添加手机号页面...',
+        });
+        result = await sendToContentScriptResilient('signup-page', request, {
+          timeoutMs,
+          responseTimeoutMs: timeoutMs,
+          retryDelayMs: 600,
+          logMessage: '步骤 9：添加手机号页面已恢复，正在重新提交手机号...',
+          logStep: visibleStep,
+          logStepKey: 'phone-verification',
+        });
+      }
 
       if (result?.error) {
         throw new Error(result.error);
@@ -5555,18 +5606,41 @@
       const timeoutMs = typeof getOAuthFlowStepTimeoutMs === 'function'
         ? await getOAuthFlowStepTimeoutMs(30000, { step: visibleStep, actionLabel: 'return to add-phone page' })
         : 30000;
-      const result = await sendToContentScriptResilient('signup-page', {
+      const request = {
         type: 'RETURN_TO_ADD_PHONE',
         source: 'background',
         payload: {},
-      }, {
-        timeoutMs,
-        responseTimeoutMs: timeoutMs,
-        retryDelayMs: 600,
-        logMessage: '步骤 9：返回添加手机号页面以更换号码...',
-        logStep: visibleStep,
-        logStepKey: 'phone-verification',
-      });
+      };
+      let result;
+      try {
+        result = await sendToContentScriptResilient('signup-page', request, {
+          timeoutMs,
+          responseTimeoutMs: timeoutMs,
+          retryDelayMs: 600,
+          logMessage: '步骤 9：返回添加手机号页面以更换号码...',
+          logStep: visibleStep,
+          logStepKey: 'phone-verification',
+        });
+      } catch (error) {
+        if (!isAuthContentScriptUnreachableError(error)) {
+          throw error;
+        }
+        await addLog(`步骤 9：返回 add-phone 时认证页脚本失联，正在重连后重试。${error.message}`, 'warn');
+        await ensureStep8SignupPageReady(tabId, {
+          timeoutMs: Math.min(15000, timeoutMs),
+          visibleStep,
+          logStepKey: 'phone-verification',
+          logMessage: '步骤 9：认证页脚本失联，正在重新连接以返回添加手机号页面...',
+        });
+        result = await sendToContentScriptResilient('signup-page', request, {
+          timeoutMs,
+          responseTimeoutMs: timeoutMs,
+          retryDelayMs: 600,
+          logMessage: '步骤 9：认证页已恢复，正在重新返回添加手机号页面...',
+          logStep: visibleStep,
+          logStepKey: 'phone-verification',
+        });
+      }
 
       if (result?.error) {
         throw new Error(result.error);

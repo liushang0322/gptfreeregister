@@ -12843,11 +12843,17 @@ function appendLog(entry) {
 
   const normalizedStep = Math.floor(Number(entry.step) || 0);
   const stepNum = normalizedStep > 0 ? String(normalizedStep) : null;
+  const nodeId = String(entry.nodeId || entry.stepKey || '').trim();
+  const nodeTitle = String(entry.nodeTitle || '').trim();
 
   let html = `<span class="log-time">${time}</span> `;
   html += `<span class="log-level log-level-${entry.level}">${levelLabel}</span> `;
   if (stepNum) {
     html += `<span class="log-step-tag step-${stepNum}">步${stepNum}</span>`;
+  }
+  if (nodeId) {
+    const nodeLabel = nodeTitle ? `${nodeId} / ${nodeTitle}` : nodeId;
+    html += `<span class="log-node-tag" title="${escapeHtml(nodeLabel)}">${escapeHtml(nodeLabel)}</span>`;
   }
   html += `<span class="log-msg">${escapeHtml(entry.message)}</span>`;
 
@@ -16633,7 +16639,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         email: null,
         password: null,
         nodeStatuses: NODE_DEFAULT_STATUSES,
-        logs: [],
         scheduledAutoRunAt: null,
         autoRunCountdownAt: null,
         autoRunCountdownTitle: '',
@@ -16657,7 +16662,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       displayStatus.textContent = '就绪';
       statusBar.className = 'status-bar';
-      logArea.innerHTML = '';
       resetIcloudManager();
       resetLuckmailManager();
       resetCustomEmailPoolManager();

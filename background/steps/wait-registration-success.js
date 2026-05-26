@@ -172,16 +172,138 @@
         .slice(0, 120);
     }
 
-    function buildRegistrationSessionJsonFileName(state = {}, sessionResult = {}) {
+    function buildRegistrationCredentialsFileName(credentials = {}, state = {}) {
       const email = sanitizeSessionJsonFileSegment(
-        sessionResult?.email
-        || sessionResult?.session?.user?.email
+        credentials?.email
         || state?.email
         || state?.registrationEmailState?.current
         || 'account'
       ) || 'account';
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      return `${timestamp}-${email}.json`;
+      return `${timestamp}-${email}-credentials.json`;
+    }
+
+    function getLatestRegistrationAccountRecord(state = {}, email = '') {
+      const accounts = Array.isArray(state?.accounts) ? state.accounts : [];
+      if (!accounts.length) {
+        return null;
+      }
+      const normalizedEmail = normalizeString(email).toLowerCase();
+      if (normalizedEmail) {
+        const matched = accounts
+          .slice()
+          .reverse()
+          .find((account) => normalizeString(account?.email).toLowerCase() === normalizedEmail);
+        if (matched) {
+          return matched;
+        }
+      }
+      return accounts[accounts.length - 1] || null;
+    }
+
+    function resolveRegistrationEmail(state = {}) {
+      const accountIdentifierType = normalizeString(state?.accountIdentifierType).toLowerCase();
+      return normalizeString(
+        state?.email
+        || state?.registrationEmailState?.current
+        || (accountIdentifierType === 'email' ? state?.accountIdentifier : '')
+        || getLatestRegistrationAccountRecord(state)?.email
+      );
+    }
+
+    function resolveRegistrationGptPassword(state = {}, email = '') {
+      const accountRecord = getLatestRegistrationAccountRecord(state, email);
+      return String(
+        state?.password
+        || state?.customPassword
+        || accountRecord?.password
+        || ''
+      );
+    }
+
+    function resolveCurrentHotmailAccount(state = {}) {
+      const currentId = normalizeString(state?.currentHotmailAccountId);
+      if (!currentId || !Array.isArray(state?.hotmailAccounts)) {
+        return null;
+      }
+      return state.hotmailAccounts.find((account) => normalizeString(account?.id) === currentId) || null;
+    }
+
+    function resolveCurrentMail2925Account(state = {}) {
+      const currentId = normalizeString(state?.currentMail2925AccountId);
+      if (!currentId || !Array.isArray(state?.mail2925Accounts)) {
+        return null;
+      }
+      return state.mail2925Accounts.find((account) => normalizeString(account?.id) === currentId) || null;
+    }
+
+    function resolveRegistrationEmailPassword(state = {}, email = '') {
+      const normalizedEmail = normalizeString(email).toLowerCase();
+      const hotmailAccount = resolveCurrentHotmailAccount(state);
+      if (hotmailAccount?.password) {
+        return {
+          emailPassword: String(hotmailAccount.password || ''),
+          source: 'hotmail-account',
+          mailboxEmail: normalizeString(hotmailAccount.email),
+        };
+      }
+
+      const mail2925Account = resolveCurrentMail2925Account(state);
+      if (mail2925Account?.password) {
+        return {
+          emailPassword: String(mail2925Account.password || ''),
+          source: 'mail2925-account',
+          mailboxEmail: normalizeString(mail2925Account.email),
+        };
+      }
+
+      if (normalizedEmail && Array.isArray(state?.hotmailAccounts)) {
+        const matchedHotmail = state.hotmailAccounts.find((account) => normalizeString(account?.email).toLowerCase() === normalizedEmail);
+        if (matchedHotmail?.password) {
+          return {
+            emailPassword: String(matchedHotmail.password || ''),
+            source: 'hotmail-account-email-match',
+            mailboxEmail: normalizeString(matchedHotmail.email),
+          };
+        }
+      }
+
+      if (normalizedEmail && Array.isArray(state?.mail2925Accounts)) {
+        const matchedMail2925 = state.mail2925Accounts.find((account) => normalizeString(account?.email).toLowerCase() === normalizedEmail);
+        if (matchedMail2925?.password) {
+          return {
+            emailPassword: String(matchedMail2925.password || ''),
+            source: 'mail2925-account-email-match',
+            mailboxEmail: normalizeString(matchedMail2925.email),
+          };
+        }
+      }
+
+      return {
+        emailPassword: '',
+        source: normalizeString(state?.mailProvider) || 'unknown',
+        mailboxEmail: '',
+      };
+    }
+
+    function buildRegistrationCredentialsPayload(state = {}) {
+      const email = resolveRegistrationEmail(state);
+      const gptPassword = resolveRegistrationGptPassword(state, email);
+      const emailPasswordInfo = resolveRegistrationEmailPassword(state, email);
+      const createdAt = new Date().toISOString();
+
+      return {
+        type: 'registration_account_credentials',
+        version: 1,
+        createdAt,
+        email,
+        emailPassword: emailPasswordInfo.emailPassword,
+        gptPassword,
+        text: `${email}----${emailPasswordInfo.emailPassword}----${gptPassword}`,
+        mailProvider: normalizeString(state?.mailProvider),
+        emailPasswordSource: emailPasswordInfo.source,
+        mailboxEmail: emailPasswordInfo.mailboxEmail,
+      };
     }
 
     function buildSub2ApiAccountJsonFileName(session = {}, state = {}) {
@@ -827,131 +949,35 @@
       };
     }
 
-    async function saveSub2ApiCodexSessionJsonWithRt(state = {}, options = {}) {
-      const visibleStep = Math.max(1, Math.floor(Number(options.visibleStep) || 7));
-      const helperBaseUrl = normalizeHotmailLocalBaseUrl(state.hotmailLocalBaseUrl);
-      if (!helperBaseUrl) {
-        throw new Error('尚未配置 Hotmail 本地助手地址，请先在侧边栏填写。');
-      }
-
-      const sessionResult = await readChatGptSessionForExport(state, visibleStep, {
-        stepKey: SAVE_SESSION_JSON_NODE_ID,
-      });
-      const tokenExchange = await acquireSub2ApiRtCallback(state, visibleStep);
-      if (tokenExchange?.deferred) {
-        await addLog(`步骤 ${visibleStep}：未在保存 Session JSON 步骤直接拿到 RT，后续将沿用当前 OAuth 链接完成验证后在导入节点交换并保存 SUB2API JSON。`, 'warn', {
-          step: visibleStep,
-          stepKey: SAVE_SESSION_JSON_NODE_ID,
-        });
-        return {
-          deferredOAuthRt: true,
-          reason: tokenExchange.reason || '',
-          pkceCodes: tokenExchange.pkceCodes || tokenExchange.authRequest?.pkceCodes || null,
-          oauthState: tokenExchange.authRequest?.oauthState || state.localCpaJsonOAuthState || null,
-          oauthUrl: state.oauthUrl || tokenExchange.authRequest?.oauthUrl || '',
-        };
-      }
-      const localApi = getLocalCliProxyApi();
-      const tokenBundle = await localApi.exchangeCodeForTokens({
-        code: tokenExchange.callback.code,
-        pkceCodes: tokenExchange.pkceCodes,
-      });
-      if (!normalizeString(tokenBundle.refreshToken)) {
-        throw new Error('OAuth token 交换成功但未返回 refresh_token，无法生成 SUB2API 可导入 JSON。');
-      }
-
-      const email = resolveSessionEmail(state, sessionResult);
-      const session = {
-        ...(sessionResult?.session && typeof sessionResult.session === 'object' ? sessionResult.session : {}),
-        type: 'codex',
-        accessToken: tokenBundle.accessToken,
-        refreshToken: tokenBundle.refreshToken,
-        idToken: tokenBundle.idToken,
-        expiresAt: tokenBundle.expiresAt || getTokenExpiresAt(tokenBundle.accessToken),
-        email,
-      };
-      const accountDataPayload = getSub2ApiApi().buildCodexSessionAccountDataPayload({
-        state,
-        session,
-        accessToken: tokenBundle.accessToken,
-        preferredAccountName: email,
-      });
-      const fileName = buildSub2ApiAccountJsonFileName(session, state);
-      const jsonText = `${JSON.stringify(accountDataPayload, null, 2)}\n`;
-      const filePath = await saveSessionJsonViaHelper(helperBaseUrl, fileName, jsonText, { visibleStep });
-      const importResult = await getSub2ApiApi().importCurrentChatGptSession({
-        ...state,
-        session,
-        accessToken: tokenBundle.accessToken,
-      }, {
-        visibleStep,
-        logLabel: `步骤 ${visibleStep}`,
-        logOptions: { step: visibleStep, stepKey: SAVE_SESSION_JSON_NODE_ID },
-        timeoutMs: 120000,
-        importTimeoutMs: 120000,
-      });
-      await setState({
-        registrationSessionJsonFilePath: filePath,
-        sub2apiAccountJsonFilePath: filePath,
-        sub2apiImportedFromSessionJson: true,
-        localhostUrl: tokenExchange.callback.url,
-        ...(importResult?.verifiedStatus ? { verifiedStatus: importResult.verifiedStatus } : {}),
-        ...(importResult?.sub2apiImportTotal !== undefined ? { sub2apiImportTotal: importResult.sub2apiImportTotal } : {}),
-        ...(importResult?.sub2apiImportCreated !== undefined ? { sub2apiImportCreated: importResult.sub2apiImportCreated } : {}),
-        ...(importResult?.sub2apiImportUpdated !== undefined ? { sub2apiImportUpdated: importResult.sub2apiImportUpdated } : {}),
-        ...(importResult?.sub2apiImportSkipped !== undefined ? { sub2apiImportSkipped: importResult.sub2apiImportSkipped } : {}),
-        ...(importResult?.sub2apiImportFailed !== undefined ? { sub2apiImportFailed: importResult.sub2apiImportFailed } : {}),
-        ...(importResult?.sub2apiFallbackMode ? { sub2apiFallbackMode: importResult.sub2apiFallbackMode } : {}),
-      });
-      await addLog(`步骤 ${visibleStep}：已获取 RT、保存 SUB2API 账号 JSON 并自动导入：${filePath}`, 'ok', {
-        step: visibleStep,
-        stepKey: SAVE_SESSION_JSON_NODE_ID,
-      });
-      return {
-        filePath,
-        sub2apiImported: true,
-        ...importResult,
-        localhostUrl: tokenExchange.callback.url,
-      };
-    }
-
     async function saveRegistrationSessionJson(state = {}, options = {}) {
       const visibleStep = Math.max(1, Math.floor(Number(options.visibleStep) || 6));
-      if (isSub2ApiCodexSessionMode(state)) {
-        return saveSub2ApiCodexSessionJsonWithRt(state, { visibleStep });
-      }
       const helperBaseUrl = normalizeHotmailLocalBaseUrl(state.hotmailLocalBaseUrl);
       if (!helperBaseUrl) {
-        await addLog(`步骤 ${visibleStep}：未配置本地 helper 地址，跳过保存 session_json。`, 'warn');
+        await addLog(`步骤 ${visibleStep}：未配置本地 helper 地址，跳过保存账号凭据。`, 'warn');
         return null;
       }
 
-      const sessionResult = await readChatGptSessionForExport(state, visibleStep, {
-        stepKey: SAVE_SESSION_JSON_NODE_ID,
-      });
-      const api = getLocalCliProxyApi();
-      const artifact = await api.buildAuthJsonArtifact({
-        pluginDir: '/',
-        relativeAuthDir: 'session_json',
-        session: sessionResult?.session,
-        accessToken: resolveSessionAccessToken(sessionResult),
-        sessionToken: sessionResult?.session?.sessionToken,
-        email: resolveSessionEmail(state, sessionResult),
-        expiresAt: sessionResult?.expiresAt || sessionResult?.session?.expires,
-        accountId: sessionResult?.session?.account?.id,
-        userId: sessionResult?.session?.user?.id,
-        planType: sessionResult?.session?.account?.planType,
-        lastRefresh: '',
-        sourceName: 'Registration Session JSON',
-      });
-
-      for (const warning of Array.isArray(artifact.warnings) ? artifact.warnings : []) {
-        await addLog(`步骤 ${visibleStep}：保存 session_json 提示：${warning}`, 'warn');
+      const credentials = buildRegistrationCredentialsPayload(state);
+      if (!credentials.email) {
+        throw new Error('缺少注册邮箱，无法保存账号凭据。');
+      }
+      if (!credentials.gptPassword) {
+        throw new Error('缺少 GPT 密码，无法保存账号凭据。');
+      }
+      if (!credentials.emailPassword) {
+        await addLog(`步骤 ${visibleStep}：当前邮箱来源未提供邮箱密码，将保存为空字段。`, 'warn', {
+          step: visibleStep,
+          stepKey: SAVE_SESSION_JSON_NODE_ID,
+        });
       }
 
-      const fileName = buildRegistrationSessionJsonFileName(state, sessionResult);
-      const filePath = await saveSessionJsonViaHelper(helperBaseUrl, fileName, artifact.jsonText, { visibleStep });
-      await addLog(`步骤 ${visibleStep}：已保存注册后 session JSON：${filePath}`, 'ok');
+      const fileName = buildRegistrationCredentialsFileName(credentials, state);
+      const jsonText = `${JSON.stringify(credentials, null, 2)}\n`;
+      const filePath = await saveSessionJsonViaHelper(helperBaseUrl, fileName, jsonText, { visibleStep });
+      await addLog(`步骤 ${visibleStep}：已保存注册账号凭据：${filePath}`, 'ok', {
+        step: visibleStep,
+        stepKey: SAVE_SESSION_JSON_NODE_ID,
+      });
       return { filePath };
     }
 
@@ -1006,34 +1032,8 @@
     async function executeSaveSessionJson(state = {}) {
       const visibleStep = Math.max(1, Math.floor(Number(state?.visibleStep) || 7));
       const sessionSaveResult = await saveRegistrationSessionJson(state, { visibleStep });
-      if (sessionSaveResult?.oauthUrl) {
-        state.oauthUrl = sessionSaveResult.oauthUrl;
-      }
-      if (sessionSaveResult?.oauthState) {
-        state.localCpaJsonOAuthState = sessionSaveResult.oauthState;
-      }
-      if (sessionSaveResult?.pkceCodes) {
-        state.localCpaJsonPkceCodes = sessionSaveResult.pkceCodes;
-      }
       await completeNodeFromBackground(state?.nodeId || 'save-session-json', {
-        ...(sessionSaveResult?.filePath ? { registrationSessionJsonFilePath: sessionSaveResult.filePath } : {}),
-        ...(sessionSaveResult?.filePath && isSub2ApiCodexSessionMode(state) ? { sub2apiAccountJsonFilePath: sessionSaveResult.filePath } : {}),
-        ...(sessionSaveResult?.sub2apiImported ? { sub2apiImportedFromSessionJson: true } : {}),
-        ...(sessionSaveResult?.verifiedStatus ? { verifiedStatus: sessionSaveResult.verifiedStatus } : {}),
-        ...(sessionSaveResult?.sub2apiImportTotal !== undefined ? { sub2apiImportTotal: sessionSaveResult.sub2apiImportTotal } : {}),
-        ...(sessionSaveResult?.sub2apiImportCreated !== undefined ? { sub2apiImportCreated: sessionSaveResult.sub2apiImportCreated } : {}),
-        ...(sessionSaveResult?.sub2apiImportUpdated !== undefined ? { sub2apiImportUpdated: sessionSaveResult.sub2apiImportUpdated } : {}),
-        ...(sessionSaveResult?.sub2apiImportSkipped !== undefined ? { sub2apiImportSkipped: sessionSaveResult.sub2apiImportSkipped } : {}),
-        ...(sessionSaveResult?.sub2apiImportFailed !== undefined ? { sub2apiImportFailed: sessionSaveResult.sub2apiImportFailed } : {}),
-        ...(sessionSaveResult?.sub2apiFallbackMode ? { sub2apiFallbackMode: sessionSaveResult.sub2apiFallbackMode } : {}),
-        ...(sessionSaveResult?.deferredOAuthRt ? { deferredOAuthRt: true } : {}),
-        ...(sessionSaveResult?.reason ? { saveSessionJsonDeferredReason: sessionSaveResult.reason } : {}),
-        ...(sessionSaveResult?.oauthState ? { localCpaJsonOAuthState: sessionSaveResult.oauthState } : {}),
-        ...(sessionSaveResult?.pkceCodes ? { localCpaJsonPkceCodes: sessionSaveResult.pkceCodes } : {}),
-        ...(sessionSaveResult?.localhostUrl ? { localhostUrl: sessionSaveResult.localhostUrl } : {}),
-        ...(state?.oauthUrl ? { oauthUrl: state.oauthUrl } : {}),
-        ...(state?.localCpaJsonOAuthState ? { localCpaJsonOAuthState: state.localCpaJsonOAuthState } : {}),
-        ...(state?.localCpaJsonPkceCodes ? { localCpaJsonPkceCodes: state.localCpaJsonPkceCodes } : {}),
+        ...(sessionSaveResult?.filePath ? { registrationAccountCredentialsFilePath: sessionSaveResult.filePath } : {}),
       });
     }
 

@@ -4309,7 +4309,8 @@ async function setIcloudAliasPreservedState(payload = {}) {
   return { email, preserved };
 }
 
-async function resetState() {
+async function resetState(options = {}) {
+  const preserveLogs = Boolean(options?.preserveLogs);
   console.log(LOG_PREFIX, 'Resetting all state');
   // Preserve settings and persistent data across resets
   const [prev, persistedSettings, persistedAliasState] = await Promise.all([
@@ -4322,6 +4323,7 @@ async function resetState() {
       'reusablePhoneActivation',
       'freeReusablePhoneActivation',
       'phoneReusableActivationPool',
+      ...(preserveLogs ? ['logs'] : []),
       'luckmailApiKey',
       'luckmailBaseUrl',
       'luckmailEmailType',
@@ -4384,6 +4386,7 @@ async function resetState() {
     seenCodes: prev.seenCodes || [],
     seenInbucketMailIds: prev.seenInbucketMailIds || [],
     accounts: prev.accounts || [],
+    ...(preserveLogs && Array.isArray(prev.logs) ? { logs: prev.logs.slice(-500) } : {}),
     tabRegistry: prev.tabRegistry || {},
     sourceLastUrls: prev.sourceLastUrls || {},
     luckmailApiKey: String(prev.luckmailApiKey || ''),
@@ -9416,6 +9419,7 @@ const loggingStatus = self.MultiPageBackgroundLoggingStatus?.createLoggingStatus
   DEFAULT_STATE,
   getStepDefinitionForState,
   getStepIdByNodeIdForState,
+  getNodeTitleForState,
   getState,
   isRecoverableStep9AuthFailure,
   LOG_PREFIX,
@@ -12499,6 +12503,8 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   createAutoRunSessionId: () => createAutoRunSessionId(),
   ensureHotmailMailboxReadyForAutoRunRound: (...args) => ensureHotmailMailboxReadyForAutoRunRound(...args),
   getAutoRunStatusPayload,
+  getNodeTitleForState,
+  getStepIdByNodeIdForState,
   getErrorMessage,
   getFirstUnfinishedNodeId,
   getPendingAutoRunTimerPlan,

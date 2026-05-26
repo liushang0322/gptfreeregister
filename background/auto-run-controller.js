@@ -253,6 +253,41 @@
         .join('；');
     }
 
+    function formatNodeContextForLog(state = {}, errorLike = null) {
+      const failedNode = inferRecordNodeFromError(errorLike, state)
+        || inferRecordNodeFromState(state, ['failed', 'running'])
+        || normalizeRecordNode(state?.currentNodeId);
+      const status = failedNode ? String(state?.nodeStatuses?.[failedNode] || '').trim() : '';
+      const step = failedNode && typeof deps.getStepIdByNodeIdForState === 'function'
+        ? Number(deps.getStepIdByNodeIdForState(failedNode, state)) || 0
+        : 0;
+      const title = failedNode && typeof deps.getNodeTitleForState === 'function'
+        ? String(deps.getNodeTitleForState(failedNode, state) || '').trim()
+        : '';
+      const parts = [];
+      if (failedNode) {
+        parts.push(`节点 ${failedNode}${title && title !== failedNode ? `（${title}）` : ''}`);
+      }
+      if (step > 0) {
+        parts.push(`步骤 ${step}`);
+      }
+      if (status) {
+        parts.push(`状态 ${status}`);
+      }
+      return parts.join('，') || '节点未知';
+    }
+
+    function formatAutoRunFailureLogBlock({ targetRun, totalRuns, attemptRun, reason, context, retryAction }) {
+      return [
+        `自动运行失败诊断`,
+        `轮次: ${targetRun}/${totalRuns}`,
+        `尝试: 第 ${attemptRun} 次`,
+        `位置: ${context || '节点未知'}`,
+        `原因: ${reason || '未知错误'}`,
+        `处理: ${retryAction || '待定'}`,
+      ].join('\n');
+    }
+
     function isPhoneNumberSupplyExhaustedFailure(errorLike) {
       const message = String(
         typeof errorLike === 'string'
@@ -692,7 +727,7 @@
               sourceLastUrls: {},
               ...getAutoRunStatusPayload('running', { currentRun: targetRun, totalRuns, attemptRun, sessionId }),
             };
-            await resetState();
+            await resetState({ preserveLogs: true });
             await setState(keepSettings);
             deps.chrome.runtime.sendMessage({ type: 'AUTO_RUN_RESET' }).catch(() => { });
             await sleepWithStop(500);
@@ -776,6 +811,8 @@
 
             const reason = getErrorMessage(err);
             roundSummary.failureReasons.push(reason);
+            const latestErrorState = await getState();
+            const failureContext = formatNodeContextForLog(latestErrorState, err);
             const blockedByPhoneSmsRateLimit = typeof isPhoneSmsPlatformRateLimitFailure === 'function'
               && isPhoneSmsPlatformRateLimitFailure(err);
             const blockedByPhoneNoSupply = !blockedByPhoneSmsRateLimit
@@ -795,7 +832,6 @@
             const blockedByStep4Route405 = typeof isStep4Route405RecoveryLimitFailure === 'function'
               && isStep4Route405RecoveryLimitFailure(err);
             const blockedBySignupEntry = isSignupEntryBlockedFailure(err);
-            const latestErrorState = await getState();
             const blockedBySignupIdentitySubmit = Number(totalRuns) > 1
               && isSignupIdentitySubmitNodeFailure(err, latestErrorState);
             const canRetry = !blockedByAddPhone
@@ -810,6 +846,21 @@
 
             await setState({
               autoRunRoundSummaries: serializeAutoRunRoundSummaries(totalRuns, roundSummaries),
+            });
+
+            await addLog(formatAutoRunFailureLogBlock({
+              targetRun,
+              totalRuns,
+              attemptRun,
+              reason,
+              context: failureContext,
+              retryAction: canRetry
+                ? `准备自动重试第 ${attemptRun + 1} 次`
+                : '不会在当前尝试继续重试，准备进入失败/跳过处理',
+            }), canRetry ? 'warn' : 'error', {
+              nodeId: inferRecordNodeFromError(err, latestErrorState)
+                || inferRecordNodeFromState(latestErrorState, ['failed', 'running'])
+                || normalizeRecordNode(latestErrorState?.currentNodeId),
             });
 
             if (blockedByAddPhone) {

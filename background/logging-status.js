@@ -6,6 +6,7 @@
       chrome,
       DEFAULT_STATE,
       getStepIdByNodeIdForState,
+      getNodeTitleForState,
       getState,
       isRecoverableStep9AuthFailure,
       LOG_PREFIX,
@@ -48,11 +49,17 @@
       return step > 0 ? step : null;
     }
 
-    function buildLogEntry(message, level = 'info', options = {}) {
+    function buildLogEntry(message, level = 'info', options = {}, state = {}) {
       const normalizedOptions = options && typeof options === 'object' ? options : {};
-      const step = normalizeLogStep(normalizedOptions.step);
       const stepKey = String(normalizedOptions.stepKey || '').trim();
       const nodeId = String(normalizedOptions.nodeId || normalizedOptions.nodeKey || stepKey || '').trim();
+      const step = normalizeLogStep(normalizedOptions.step)
+        || (nodeId && typeof getStepIdByNodeIdForState === 'function'
+          ? normalizeLogStep(getStepIdByNodeIdForState(nodeId, state))
+          : null);
+      const nodeTitle = nodeId && typeof getNodeTitleForState === 'function'
+        ? String(getNodeTitleForState(nodeId, state) || '').trim()
+        : '';
       return {
         message: String(message || ''),
         level,
@@ -60,13 +67,14 @@
         step,
         stepKey,
         nodeId,
+        nodeTitle: nodeTitle && nodeTitle !== nodeId ? nodeTitle : '',
       };
     }
 
     async function addLog(message, level = 'info', options = {}) {
       const state = await getState();
       const logs = state.logs || [];
-      const entry = buildLogEntry(message, level, options);
+      const entry = buildLogEntry(message, level, options, state);
       logs.push(entry);
       if (logs.length > 500) logs.splice(0, logs.length - 500);
       await setState({ logs });

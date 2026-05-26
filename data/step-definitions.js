@@ -28,7 +28,7 @@
   const NORMAL_REGISTRATION_PREFIX_STEP_DEFINITIONS = NORMAL_PREFIX_STEP_DEFINITIONS.slice(0, 6);
   const SAVE_SESSION_JSON_STEP_DEFINITION = {
     key: 'save-session-json',
-    title: '保存 Session JSON',
+    title: '保存账号凭据',
     sourceId: 'chatgpt',
     driverId: null,
     command: 'save-session-json',
