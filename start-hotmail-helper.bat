@@ -3,6 +3,17 @@ setlocal EnableExtensions
 
 cd /d "%~dp0"
 
+echo [可选] 如果你需要走代理访问微软接口，请在下方输入代理端口。
+set /p PROXY_PORT="请输入代理端口 (如 7890，不使用代理请直接回车跳过): "
+if not "%PROXY_PORT%"=="" (
+  set HTTP_PROXY=http://127.0.0.1:%PROXY_PORT%
+  set HTTPS_PROXY=http://127.0.0.1:%PROXY_PORT%
+  echo 已设置代理：http://127.0.0.1:%PROXY_PORT%
+) else (
+  echo 未配置代理，将直连访问。
+)
+echo.
+
 if /i "%~1"=="/?" goto :usage
 if /i "%~1"=="-h" goto :usage
 if /i "%~1"=="--help" goto :usage
