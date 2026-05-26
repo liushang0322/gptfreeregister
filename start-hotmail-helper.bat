@@ -3,14 +3,14 @@ setlocal EnableExtensions
 
 cd /d "%~dp0"
 
-echo [可选] 如果你需要走代理访问微软接口，请在下方输入代理端口。
-set /p PROXY_PORT="请输入代理端口 (如 7890，不使用代理请直接回车跳过): "
+echo [OPTIONAL] If you need a proxy to access Microsoft APIs, enter the proxy port below.
+set /p PROXY_PORT="Enter proxy port (e.g. 7890, or press Enter to skip): "
 if not "%PROXY_PORT%"=="" (
   set HTTP_PROXY=http://127.0.0.1:%PROXY_PORT%
   set HTTPS_PROXY=http://127.0.0.1:%PROXY_PORT%
-  echo 已设置代理：http://127.0.0.1:%PROXY_PORT%
+  echo Proxy set to: http://127.0.0.1:%PROXY_PORT%
 ) else (
-  echo 未配置代理，将直连访问。
+  echo No proxy configured, using direct connection.
 )
 echo.
 
