@@ -3,6 +3,12 @@ setlocal EnableExtensions
 
 cd /d "%~dp0"
 
+echo ======================================================================
+echo [WARNING] Please DO NOT click inside this window to select text!
+echo Selecting text in Windows cmd freezes the process and causes timeouts.
+echo If the title bar says "Select:", press ENTER to unfreeze it immediately.
+echo ======================================================================
+echo.
 echo [OPTIONAL] If you need a proxy to access Microsoft APIs, enter the proxy port below.
 set /p PROXY_PORT="Enter proxy port (e.g. 7890, or press Enter to skip): "
 if not "%PROXY_PORT%"=="" (
