@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.header import decode_header
 from email.utils import parseaddr, parsedate_to_datetime
@@ -797,28 +798,39 @@ def collect_outlook_messages(email_addr, client_id, refresh_token, mailboxes, to
 
 
 def collect_messages(email_addr, client_id, refresh_token, mailboxes, top):
-    errors = []
     collectors = [
         ("graph", collect_graph_messages),
         ("outlook", collect_outlook_messages),
         ("imap", collect_imap_messages),
     ]
 
-    for transport_name, collector in collectors:
+    def _try(name, fn):
         try:
-            log_info(f"message collection start transport={transport_name}")
-            result = collector(email_addr, client_id, refresh_token, mailboxes, top)
+            log_info(f"message collection start transport={name}")
+            result = fn(email_addr, client_id, refresh_token, mailboxes, top)
             log_info(
-                f"message collection success transport={transport_name} "
+                f"message collection success transport={name} "
                 f"tokenEndpoint={result['token_payload'].get('token_endpoint', '')}"
             )
-            return result
+            return (True, name, result, None)
         except Exception as exc:
             message = compact_text(str(exc), 600)
-            errors.append(f"{transport_name}: {message}")
-            log_info(f"message collection failed transport={transport_name} detail={message}")
+            log_info(f"message collection failed transport={name} detail={message}")
+            return (False, name, None, message)
 
-    raise RuntimeError(f"Message collection failed on all transports: {' | '.join(errors)}")
+    executor = ThreadPoolExecutor(max_workers=3)
+    try:
+        future_map = {executor.submit(_try, name, fn): name for name, fn in collectors}
+        errors = {}
+        for future in as_completed(future_map):
+            ok, name, result, error = future.result()
+            if ok:
+                return result
+            errors[name] = error
+
+        raise RuntimeError(f"Message collection failed on all transports: {' | '.join(f'{k}: {v}' for k, v in errors.items())}")
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def extract_code(text, code_patterns=None):

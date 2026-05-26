@@ -1196,6 +1196,20 @@
             });
             await appendRoundRecordIfNeeded('failed', reason, err);
             if (!autoRunSkipFailures) {
+              if (typeof totalRuns === 'number' && totalRuns > 1 && targetRun < totalRuns) {
+                await addLog(
+                  `第 ${targetRun}/${totalRuns} 轮失败：${reason}`,
+                  'error'
+                );
+                await addLog(
+                  `多轮模式下跳过失败的当前轮，继续第 ${targetRun + 1}/${totalRuns} 轮。`,
+                  'warn'
+                );
+                cancelPendingCommands('当前轮执行失败，跳过继续下一轮。');
+                await broadcastStopToContentScripts();
+                forceFreshTabsNextRun = true;
+                break;
+              }
               cancelPendingCommands('当前轮执行失败。');
               await broadcastStopToContentScripts();
               await addLog('自动重试未开启，自动运行将在当前失败后停止。', 'warn');

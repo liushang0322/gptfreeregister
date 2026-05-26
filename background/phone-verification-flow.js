@@ -5492,9 +5492,26 @@
           };
         })()
         : null;
-      const timeoutMs = typeof getOAuthFlowStepTimeoutMs === 'function'
-        ? await getOAuthFlowStepTimeoutMs(45000, { step: visibleStep, actionLabel: '提交手机验证码' })
-        : 45000;
+      let timeoutMs = 45000;
+      if (typeof getOAuthFlowStepTimeoutMs === 'function') {
+        try {
+          timeoutMs = await getOAuthFlowStepTimeoutMs(45000, { step: visibleStep, actionLabel: '提交手机验证码' });
+        } catch (oauthError) {
+          const isOAuthTimeout = (
+            typeof oauthError?.message === 'string'
+            && /5\s*分钟内未完成/.test(oauthError.message)
+            && /从拿到 OAuth 登录地址开始/.test(oauthError.message)
+          );
+          if (isOAuthTimeout) {
+            await addLog(
+              `步骤 ${visibleStep}：OAuth 5 分钟窗口已过期，但已获取验证码 ${code}，继续尝试提交。`,
+              'warn'
+            );
+          } else {
+            throw oauthError;
+          }
+        }
+      }
       const result = await sendToContentScriptResilient('signup-page', {
         type: 'SUBMIT_PHONE_VERIFICATION_CODE',
         source: 'background',
