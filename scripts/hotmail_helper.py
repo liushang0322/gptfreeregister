@@ -61,7 +61,7 @@ TOKEN_ENDPOINTS = {
 }
 IMAP_HOST = "outlook.office365.com"
 IMAP_PORT = 993
-REQUEST_TIMEOUT_SECONDS = 45
+REQUEST_TIMEOUT_SECONDS = 20
 FETCH_LIMIT_DEFAULT = 5
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ACCOUNT_LOG_PATH = os.path.join(BASE_DIR, "data", "account-run-history.txt")

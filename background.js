@@ -607,7 +607,7 @@ const DEFAULT_HOTMAIL_REMOTE_BASE_URL = '';
 const DEFAULT_HOTMAIL_LOCAL_BASE_URL = 'http://127.0.0.1:17373';
 const DEFAULT_ACCOUNT_RUN_HISTORY_HELPER_BASE_URL = DEFAULT_HOTMAIL_LOCAL_BASE_URL;
 const DEFAULT_LOCAL_CPA_JSON_RELATIVE_AUTH_DIR = '.cli-proxy-api';
-const HOTMAIL_LOCAL_HELPER_TIMEOUT_MS = 45000;
+const HOTMAIL_LOCAL_HELPER_TIMEOUT_MS = 120000;
 const HOTMAIL_ACCOUNT_VERIFY_TIMEOUT_MS = 60000;
 const DEFAULT_LUCKMAIL_PROJECT_CODE = 'openai';
 const DEFAULT_HERO_SMS_BASE_URL = 'https://hero-sms.com/stubs/handler_api.php';
@@ -5337,9 +5337,10 @@ async function requestHotmailLocalMessages(account, mailboxes = HOTMAIL_MAILBOXE
     });
   } catch (err) {
     if (err?.name === 'AbortError') {
-      throw new Error(`Hotmail 本地助手请求超时（>${Math.round(requestTimeoutMs / 1000)} 秒）`);
+      throw new Error(`Hotmail 本地助手请求超时（>${Math.round(requestTimeoutMs / 1000)} 秒），请检查本地助手网络代理配置。`);
     }
-    throw new Error(`Hotmail 本地助手请求失败：${err.message}`);
+    const isTimeout = /timeout|timed out/i.test(err.message);
+    throw new Error(`Hotmail 本地助手请求失败：${err.message}${isTimeout ? '（请检查本地助手 network proxy/梯子是否能访问微软接口）' : ''}`);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -5428,9 +5429,10 @@ async function requestHotmailLocalCode(account, pollPayload = {}) {
     });
   } catch (err) {
     if (err?.name === 'AbortError') {
-      throw new Error(`Hotmail 本地助手请求超时（>${Math.round(requestTimeoutMs / 1000)} 秒）`);
+      throw new Error(`Hotmail 本地助手请求超时（>${Math.round(requestTimeoutMs / 1000)} 秒），请检查本地助手网络代理配置。`);
     }
-    throw new Error(`Hotmail 本地助手请求失败：${err.message}`);
+    const isTimeout = /timeout|timed out/i.test(err.message);
+    throw new Error(`Hotmail 本地助手请求失败：${err.message}${isTimeout ? '（请检查本地助手 network proxy/梯子是否能访问微软接口）' : ''}`);
   } finally {
     clearTimeout(timeoutId);
   }
