@@ -614,8 +614,8 @@ const DEFAULT_HERO_SMS_BASE_URL = 'https://hero-sms.com/stubs/handler_api.php';
 const HERO_SMS_SERVICE_CODE = 'dr';
 const HERO_SMS_SERVICE_LABEL = 'OpenAI';
 const LEGACY_HERO_SMS_DEFAULT_COUNTRY_ID = 52;
-const HERO_SMS_COUNTRY_ID = 151;
-const HERO_SMS_COUNTRY_LABEL = 'Chile';
+const HERO_SMS_COUNTRY_ID = 19;
+const HERO_SMS_COUNTRY_LABEL = 'Nigeria';
 const PHONE_SMS_PROVIDER_HERO = 'hero-sms';
 const PHONE_SMS_PROVIDER_5SIM = '5sim';
 const PHONE_SMS_PROVIDER_HERO_SMS = PHONE_SMS_PROVIDER_HERO;
@@ -1156,7 +1156,10 @@ const PERSISTED_SETTING_DEFAULTS = {
   heroSmsPreferredPrice: '',
   heroSmsCountryId: HERO_SMS_COUNTRY_ID,
   heroSmsCountryLabel: HERO_SMS_COUNTRY_LABEL,
-  heroSmsCountryFallback: [],
+  heroSmsCountryFallback: [
+    { id: 33, label: 'Colombia' },
+    { id: 73, label: 'Brazil' }
+  ],
   fiveSimApiKey: '',
   fiveSimProduct: DEFAULT_FIVE_SIM_PRODUCT,
   fiveSimCountryId: FIVE_SIM_COUNTRY_ID,
