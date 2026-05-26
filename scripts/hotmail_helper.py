@@ -799,9 +799,9 @@ def collect_outlook_messages(email_addr, client_id, refresh_token, mailboxes, to
 def collect_messages(email_addr, client_id, refresh_token, mailboxes, top):
     errors = []
     collectors = [
-        ("imap", collect_imap_messages),
         ("graph", collect_graph_messages),
         ("outlook", collect_outlook_messages),
+        ("imap", collect_imap_messages),
     ]
 
     for transport_name, collector in collectors:
